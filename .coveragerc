@@ -1,0 +1,61 @@
+[run]
+branch = True
+source = src/pr2md
+parallel = True
+concurrency = thread,multiprocessing
+omit =
+    */tests/*
+    */test_*.py
+    */__pycache__/*
+    */venv/*
+    */virtualenv/*
+    */.venv/*
+    */site-packages/*
+
+[report]
+# Require >90% line and branch coverage for core logic
+fail_under = 90
+precision = 2
+show_missing = True
+skip_covered = False
+skip_empty = True
+sort = Cover
+
+# Exclude lines from coverage
+exclude_lines =
+    # Standard pragmas
+    pragma: no cover
+    
+    # Defensive programming
+    raise AssertionError
+    raise NotImplementedError
+    
+    # Abstract methods
+    @abstractmethod
+    @abc.abstractmethod
+    
+    # Type checking blocks
+    if TYPE_CHECKING:
+    if typing.TYPE_CHECKING:
+    
+    # Debug-only code
+    if __name__ == .__main__.:
+    if DEBUG:
+    
+    # Protocol definitions
+    @overload
+    \.\.\.
+    
+    # Unreachable code markers
+    assert False
+    return NotImplemented
+
+[html]
+directory = htmlcov
+title = PR2MD Coverage Report
+
+[xml]
+output = coverage.xml
+
+[json]
+output = coverage.json

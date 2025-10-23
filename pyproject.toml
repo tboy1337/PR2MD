@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PR2MD"
+version = "1.0.1"
+description = "Pull Request Markdown Generator"
+readme = "README.md"
+requires-python = ">=3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "tboy1337"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Typing :: Typed",
+]
+
+[project.scripts]
+pr2md = "pr2md.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/tboy1337/PR2MD"
+Repository = "https://github.com/tboy1337/PR2MD"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pr2md*"]
+exclude = ["tests*"]
+
+# Black Configuration
+[tool.black]
+line-length = 88
+target-version = ['py313']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    # Directories
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | venv
+  | htmlcov
+  | __pycache__
+)/
+'''
+
+# isort Configuration
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip_glob = [
+    "*/venv/*",
+    "*/.venv/*",
+    "*/virtualenv/*",
+    "*/build/*",
+    "*/dist/*",
+    "*/__pycache__/*",
+    "*/htmlcov/*",
+]
+known_first_party = ["pr2md"]
+known_third_party = [
+    "pytest",
+    "hypothesis",
+    "requests",
+]
+sections = [
+    "FUTURE",
+    "STDLIB",
+    "THIRDPARTY",
+    "FIRSTPARTY",
+    "LOCALFOLDER",
+]
+
+# Hypothesis Configuration
+[tool.hypothesis]
+max_examples = 100
+deadline = 30000
+derandomize = false
+print_blob = true
