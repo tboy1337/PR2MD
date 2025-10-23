@@ -1,6 +1,7 @@
 # PR2MD - Pull Request to Markdown
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://img.shields.io/pypi/v/pr2md.svg)](https://pypi.org/project/pr2md/)
 [![License: CRL](https://img.shields.io/badge/License-CRL-red.svg)](LICENSE.md)
 
 **PR2MD** is a powerful command-line tool that extracts GitHub Pull Request data and converts it into comprehensive, well-formatted Markdown documents. Perfect for documentation, archiving, code reviews, or offline analysis of pull requests.
@@ -19,7 +20,19 @@
 
 ## Installation
 
+### Using pip (Recommended)
+
+The easiest way to install PR2MD is directly from PyPI:
+
+```bash
+pip install PR2MD
+```
+
+That's it! The `pr2md` command will be available in your terminal.
+
 ### From Source
+
+Alternatively, you can install from source for development or to get the latest unreleased features:
 
 ```bash
 # Clone the repository
@@ -36,7 +49,19 @@ pip install -e .
 ### Requirements
 
 - Python 3.13 or higher
-- `requests` library (for GitHub API communication)
+- `requests` library (automatically installed with pip)
+
+## Quick Start
+
+After installing via pip, you can immediately start using PR2MD:
+
+```bash
+# Extract a PR by URL
+pr2md https://github.com/owner/repo/pull/123
+
+# Save to a file
+pr2md https://github.com/owner/repo/pull/123 -o output.md
+```
 
 ## Usage
 
@@ -142,90 +167,17 @@ For most use cases, unauthenticated access is sufficient as the tool makes only 
 
 ### Setup Development Environment
 
+For development work, you'll need to install from source:
+
 ```bash
 # Clone the repository
 git clone https://github.com/tboy1337/PR2MD.git
 cd PR2MD
 
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Install the package in editable mode
+# Install the package in editable mode with development dependencies
 pip install -e .
+pip install -r requirements-dev.txt
 ```
-
-### Running Tests
-
-The project includes comprehensive tests using pytest:
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=pr2md --cov-report=html
-
-# Run specific test file
-pytest tests/test_cli.py
-
-# Run with verbose output
-pytest -v
-```
-
-### Code Quality
-
-The project maintains high code quality standards:
-
-```bash
-# Type checking with mypy
-mypy src/pr2md
-
-# Linting with pylint
-pylint src/pr2md
-
-# Code formatting with black
-black src/pr2md tests
-
-# Import sorting with isort
-isort src/pr2md tests
-
-# Remove trailing whitespace
-py -m autopep8 --in-place --select=W291,W293 src tests
-```
-
-### Project Structure
-
-```
-PR2MD/
-├── src/
-│   └── pr2md/
-│       ├── __init__.py
-│       ├── __main__.py      # Entry point
-│       ├── cli.py           # Command-line interface
-│       ├── models.py        # Data models
-│       ├── pr_extractor.py  # GitHub API client
-│       ├── formatter.py     # Markdown formatter
-│       └── py.typed         # Type checking marker
-├── tests/                   # Comprehensive test suite
-├── pyproject.toml          # Project configuration
-├── requirements.txt        # Runtime dependencies
-├── requirements-dev.txt    # Development dependencies
-├── mypy.ini               # Type checking configuration
-├── pytest.ini             # Test configuration
-└── README.md              # This file
-```
-
-## Architecture
-
-### Core Components
-
-1. **CLI Module** (`cli.py`): Handles command-line argument parsing, logging setup, and orchestrates the extraction and formatting process.
-
-2. **PR Extractor** (`pr_extractor.py`): Communicates with the GitHub REST API to fetch PR data, comments, reviews, and diffs. Includes comprehensive error handling.
-
-3. **Models** (`models.py`): Type-safe data classes representing GitHub entities (PullRequest, Comment, Review, ReviewComment, User, Label).
-
-4. **Formatter** (`formatter.py`): Converts structured PR data into beautifully formatted Markdown with proper sections and syntax highlighting.
 
 ### Design Principles
 
@@ -270,27 +222,4 @@ This project is maintained by tboy1337. Contributions, issues, and feature reque
 
 ## License
 
-This project is licensed under the **Commercial Restricted License (CRL) Version 1.1**.
-
-**Summary:**
-- ✅ **Free for non-commercial use** (personal, educational, research, open source)
-- ❌ **Commercial use requires a separate commercial license**
-- 📧 Contact the copyright holder for commercial licensing inquiries
-
-See the [LICENSE.md](LICENSE.md) file for the complete license text.
-
-## Author
-
-**tboy1337**
-- GitHub: [@tboy1337](https://github.com/tboy1337)
-
-## Acknowledgments
-
-- Built with Python 3.13+
-- Uses the [GitHub REST API](https://docs.github.com/en/rest)
-- Inspired by the need for better PR documentation tools
-
----
-
-**Made with ❤️ for the developer community**
-
+This project is licensed under the CRL License - see [LICENSE.md](https://github.com/tboy1337/PR2MD/blob/main/LICENSE.md) for details.
