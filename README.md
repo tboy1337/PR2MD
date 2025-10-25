@@ -4,16 +4,16 @@
 [![PyPI version](https://img.shields.io/pypi/v/pr2md.svg)](https://pypi.org/project/pr2md/)
 [![License: CRL](https://img.shields.io/badge/License-CRL-red.svg)](LICENSE.md)
 
-**PR2MD** is a powerful command-line tool that extracts GitHub Pull Request data and converts it into comprehensive, well-formatted Markdown documents. Perfect for documentation, archiving, code reviews, or offline analysis of pull requests.
+**PR2MD** is a powerful command-line tool that extracts GitHub Pull Request and Issue data and converts it into comprehensive, well-formatted Markdown documents. Perfect for documentation, archiving, code reviews, or offline analysis of pull requests and issues.
 
 ## Features
 
-- 📥 **Complete PR Data Extraction**: Retrieves all PR details including metadata, description, labels, and timestamps
+- 📥 **Complete PR & Issue Data Extraction**: Retrieves all PR and Issue details including metadata, description, labels, and timestamps
 - 💬 **Full Conversation Thread**: Captures all comments and discussions in chronological order
-- ✅ **Review Information**: Includes all code reviews with approval status and reviewer comments
-- 💻 **Code Comments**: Extracts inline review comments with their associated code context
-- 📊 **Change Statistics**: Displays files changed, additions, deletions, and commit information
-- 🔍 **Complete Diffs**: Includes the full unified diff of all changes
+- ✅ **Review Information**: Includes all code reviews with approval status and reviewer comments (PRs only)
+- 💻 **Code Comments**: Extracts inline review comments with their associated code context (PRs only)
+- 📊 **Change Statistics**: Displays files changed, additions, deletions, and commit information (PRs only)
+- 🔍 **Complete Diffs**: Includes the full unified diff of all changes (PRs only)
 - 🎨 **Beautiful Formatting**: Generates clean, readable Markdown with proper structure and syntax highlighting
 - ⚡ **Fast & Efficient**: Uses the official GitHub REST API with proper error handling
 - 🔒 **Type-Safe**: Written in Python with comprehensive type annotations
@@ -59,6 +59,9 @@ After installing via pip, you can immediately start using PR2MD:
 # Extract a PR by URL (saves to PR-123.md)
 pr2md https://github.com/owner/repo/pull/123
 
+# Extract an Issue by URL (saves to Issue-456.md)
+pr2md https://github.com/owner/repo/issues/456
+
 # Save to a custom filename
 pr2md https://github.com/owner/repo/pull/123 -o output.md
 
@@ -76,10 +79,17 @@ Extract a PR using its URL (automatically saves to `PR-123.md`):
 pr2md https://github.com/owner/repo/pull/123
 ```
 
-Or specify the owner, repository, and PR number separately:
+Extract an Issue using its URL (automatically saves to `Issue-456.md`):
 
 ```bash
-pr2md owner repo 123
+pr2md https://github.com/owner/repo/issues/456
+```
+
+Or specify the owner, repository, type, and number separately:
+
+```bash
+pr2md owner repo pr 123
+pr2md owner repo issue 456
 ```
 
 ### Save to Custom Filename
@@ -88,7 +98,8 @@ Output the Markdown to a custom filename:
 
 ```bash
 pr2md https://github.com/owner/repo/pull/123 -o pr-details.md
-pr2md owner repo 123 --output pr-analysis.md
+pr2md owner repo pr 123 --output pr-analysis.md
+pr2md owner repo issue 456 --output issue-report.md
 ```
 
 ### Output to Console
@@ -97,7 +108,8 @@ Output to stdout instead of saving to a file:
 
 ```bash
 pr2md https://github.com/owner/repo/pull/123 -o
-pr2md owner repo 123 --output
+pr2md owner repo pr 123 --output
+pr2md owner repo issue 456 --output
 ```
 
 ### Verbose Logging
@@ -119,6 +131,8 @@ pr2md --help
 ## Output Format
 
 The generated Markdown document includes:
+
+### For Pull Requests:
 
 ### 1. PR Header
 - PR number, title, and status (Open/Closed/Merged)
@@ -155,19 +169,40 @@ The generated Markdown document includes:
 - Includes code context (diff hunk)
 - Reply chains preserved
 
+### For Issues:
+
+### 1. Issue Header
+- Issue number, title, and status (Open/Closed)
+- Author information with GitHub profile link
+- Creation, update, and closed timestamps
+- Labels (if any)
+
+### 2. Description
+- The full issue description/body
+
+### 3. Conversation Thread
+- All comments from the issue discussion
+- Chronologically sorted
+- Author attribution and timestamps
+- Links back to GitHub
+
 ## Example
 
 ```bash
 # Extract PR #42 from the PR2MD repository (saves to PR-42.md)
-pr2md tboy1337 PR2MD 42
+pr2md tboy1337 PR2MD pr 42
+
+# Extract Issue #10 from the PR2MD repository (saves to Issue-10.md)
+pr2md tboy1337 PR2MD issue 10
 ```
 
-This creates a file `PR-42.md` containing all the PR information in a beautifully formatted Markdown document.
+This creates files containing all the PR/Issue information in beautifully formatted Markdown documents.
 
 If you want a custom filename:
 
 ```bash
-pr2md tboy1337 PR2MD 42 -o pr-42-analysis.md
+pr2md tboy1337 PR2MD pr 42 -o pr-42-analysis.md
+pr2md tboy1337 PR2MD issue 10 -o issue-10-report.md
 ```
 
 ## GitHub API Rate Limiting
@@ -187,6 +222,7 @@ For most use cases, unauthenticated access is sufficient as the tool makes only 
 - Rate limited by GitHub API (60 requests/hour without authentication)
 - Requires internet connection to fetch data
 - Large PRs with extensive diffs may generate very large Markdown files
+- Issues can be downloaded, but PRs accessed via the `/issues/` endpoint will show as issues (use `/pull/` or explicit `pr` type for PRs)
 
 ## License
 

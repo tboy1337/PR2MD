@@ -356,9 +356,7 @@ class ReferenceDownloader:
 
         return downloaded_files
 
-    def _is_from_url(
-        self, reference: GitHubReference
-    ) -> bool:  # pylint: disable=unused-argument
+    def _is_from_url(self, _reference: GitHubReference) -> bool:
         """
         Check if a reference was parsed from a URL.
 
@@ -366,7 +364,7 @@ class ReferenceDownloader:
         so we trust them. Non-URL references need verification.
 
         Args:
-            reference: GitHubReference to check
+            _reference: GitHubReference to check (currently unused)
 
         Returns:
             True if from URL (trustworthy type), False otherwise
