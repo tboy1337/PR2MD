@@ -3,7 +3,7 @@
 import logging
 from collections import defaultdict
 
-from pr2md.models import Comment, PullRequest, Review, ReviewComment
+from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 
 logger = logging.getLogger(__name__)
 
@@ -229,3 +229,63 @@ class MarkdownFormatter:
         return "## Review Comments (Code Comments)\n\n" + "\n\n---\n\n".join(
             formatted_files
         )
+
+    @staticmethod
+    def format_issue(issue: Issue, comments: list[Comment]) -> str:
+        """
+        Format issue data as Markdown.
+
+        Args:
+            issue: Issue object
+            comments: List of comments
+
+        Returns:
+            Formatted Markdown string
+        """
+        logger.info("Formatting issue data as Markdown")
+        sections = [
+            MarkdownFormatter._format_issue_header(issue),
+            MarkdownFormatter._format_issue_description(issue),
+            MarkdownFormatter._format_conversation(comments),
+        ]
+
+        result = "\n\n".join(sections)
+        logger.info("Formatted Markdown (%d characters)", len(result))
+        return result
+
+    @staticmethod
+    def _format_issue_header(issue: Issue) -> str:
+        """Format issue header section."""
+        status = issue.state.upper()
+
+        labels_str = ""
+        if issue.labels:
+            label_names = ", ".join([f"`{label.name}`" for label in issue.labels])
+            labels_str = f"\n**Labels:** {label_names}"
+
+        closed_str = ""
+        if issue.closed_at:
+            closed_time = issue.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            closed_str = f"\n**Closed:** {closed_time}"
+            # Update status to CLOSED if it has a closed_at date
+            if status == "OPEN":
+                status = "CLOSED"
+
+        created_time = issue.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        updated_time = issue.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        return f"""# {issue.title}
+
+**Issue Number:** #{issue.number}
+**Status:** {status}
+**Author:** [{issue.user.login}]({issue.user.html_url})
+**Created:** {created_time}
+**Updated:** {updated_time}{closed_str}
+**URL:** {issue.html_url}{labels_str}"""
+
+    @staticmethod
+    def _format_issue_description(issue: Issue) -> str:
+        """Format issue description section."""
+        if not issue.body:
+            return "## Description\n\n*No description provided.*"
+        return f"## Description\n\n{issue.body}"

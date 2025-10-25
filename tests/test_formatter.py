@@ -10,7 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pr2md.formatter import MarkdownFormatter
-from pr2md.models import Comment, Label, PullRequest, Review, ReviewComment, User
+from pr2md.models import Comment, Issue, Label, PullRequest, Review, ReviewComment, User
 
 
 @pytest.fixture
@@ -411,7 +411,7 @@ class TestMarkdownFormatterHypothesis:
         comment_objects = [
             Comment(
                 id=i,
-                user=                User(
+                user=User(
                     login="test",
                     id=123,
                     avatar_url="https://example.com/avatar.jpg",
@@ -546,3 +546,70 @@ class TestMarkdownFormatterHypothesis:
         assert "## Review Comments" in markdown
         # Markdown should be non-empty
         assert len(markdown) > 0
+
+
+class TestIssueFormatting:
+    """Tests for issue formatting."""
+
+    @pytest.fixture
+    def sample_issue(self, sample_user: User) -> Issue:
+        """Create a sample issue."""
+        return Issue(
+            number=42,
+            title="Test Issue",
+            body="This is a test issue",
+            state="open",
+            user=sample_user,
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 2, 12, 0, 0, tzinfo=timezone.utc),
+            closed_at=None,
+            html_url="https://github.com/owner/repo/issues/42",
+            labels=[Label("bug", "d73a4a", "Something isn't working")],
+        )
+
+    def test_format_issue_header(self, sample_issue: Issue) -> None:
+        """Test issue header formatting."""
+        header = MarkdownFormatter._format_issue_header(sample_issue)
+        assert "# Test Issue" in header
+        assert "**Issue Number:** #42" in header
+        assert "**Status:** OPEN" in header
+        assert "**Author:** [testuser]" in header
+        assert "**Labels:** `bug`" in header
+
+    def test_format_issue_header_closed(self, sample_issue: Issue) -> None:
+        """Test issue header formatting for closed issue."""
+        sample_issue.closed_at = datetime(2025, 1, 3, 12, 0, 0, tzinfo=timezone.utc)
+        sample_issue.state = "closed"
+        header = MarkdownFormatter._format_issue_header(sample_issue)
+        assert "**Status:** CLOSED" in header
+        assert "**Closed:**" in header
+
+    def test_format_issue_description(self, sample_issue: Issue) -> None:
+        """Test issue description formatting."""
+        description = MarkdownFormatter._format_issue_description(sample_issue)
+        assert "## Description" in description
+        assert "This is a test issue" in description
+
+    def test_format_issue_description_empty(self, sample_issue: Issue) -> None:
+        """Test issue description formatting when empty."""
+        sample_issue.body = None
+        description = MarkdownFormatter._format_issue_description(sample_issue)
+        assert "*No description provided.*" in description
+
+    def test_format_issue_complete(
+        self, sample_issue: Issue, sample_comment: Comment
+    ) -> None:
+        """Test complete issue formatting."""
+        markdown = MarkdownFormatter.format_issue(sample_issue, [sample_comment])
+
+        assert "# Test Issue" in markdown
+        assert "## Description" in markdown
+        assert "## Conversation Thread" in markdown
+        assert "This is a comment" in markdown
+
+    def test_format_issue_no_comments(self, sample_issue: Issue) -> None:
+        """Test issue formatting with no comments."""
+        markdown = MarkdownFormatter.format_issue(sample_issue, [])
+
+        assert "# Test Issue" in markdown
+        assert "*No comments in the conversation thread.*" in markdown

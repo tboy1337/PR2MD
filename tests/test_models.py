@@ -504,7 +504,8 @@ class TestReviewCommentHypothesis:
         """Test ReviewComment.from_dict with property-based testing."""
         review_comment = ReviewComment.from_dict(review_comment_dict)
         assert isinstance(review_comment, ReviewComment)
-        assert review_comment.id == int(review_comment_dict["id"])  # type: ignore[call-overload]
+        rc_id: object = review_comment_dict["id"]
+        assert review_comment.id == int(rc_id)  # type: ignore[call-overload]
         assert isinstance(review_comment.user, User)
         assert review_comment.body == str(review_comment_dict["body"])
         assert review_comment.path == str(review_comment_dict["path"])
@@ -596,7 +597,8 @@ class TestPullRequestHypothesis:
         """Test PullRequest.from_dict with property-based testing."""
         pull_request = PullRequest.from_dict(pr_dict)
         assert isinstance(pull_request, PullRequest)
-        assert pull_request.number == int(pr_dict["number"])  # type: ignore[call-overload]
+        pr_number: object = pr_dict["number"]
+        assert pull_request.number == int(pr_number)  # type: ignore[call-overload]
         assert pull_request.title == str(pr_dict["title"])
         assert pull_request.state == str(pr_dict["state"])
         assert isinstance(pull_request.user, User)

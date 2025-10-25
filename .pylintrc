@@ -150,8 +150,8 @@ overgeneral-exceptions = builtins.BaseException,
                         builtins.Exception
 
 [SIMILARITIES]
-# Minimum lines number of a similarity
-min-similarity-lines = 4
+# Minimum lines number of a similarity (higher for test fixtures)
+min-similarity-lines = 20
 
 # Ignore comments when computing similarities
 ignore-comments = yes
@@ -161,6 +161,9 @@ ignore-docstrings = yes
 
 # Ignore imports when computing similarities
 ignore-imports = yes
+
+# Ignore duplicate code in test files where fixtures often contain similar setup
+ignore-signatures = yes
 
 [SPELLING]
 # Limits count of emitted suggestions for spelling mistakes

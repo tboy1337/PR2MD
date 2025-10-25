@@ -156,6 +156,48 @@ class Review:
 
 
 @dataclass
+class Issue:
+    """GitHub Issue."""
+
+    number: int
+    title: str
+    body: Optional[str]
+    state: str
+    user: User
+    created_at: datetime
+    updated_at: datetime
+    closed_at: Optional[datetime]
+    html_url: str
+    labels: list[Label]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Issue":
+        """Create Issue from API response dictionary."""
+        closed_at = None
+        if data.get("closed_at"):
+            closed_at = datetime.fromisoformat(
+                str(data["closed_at"]).replace("Z", "+00:00")
+            )
+
+        return cls(
+            number=int(data["number"]),
+            title=str(data["title"]),
+            body=str(data["body"]) if data.get("body") is not None else None,
+            state=str(data["state"]),
+            user=User.from_dict(dict(data["user"])),
+            created_at=datetime.fromisoformat(
+                str(data["created_at"]).replace("Z", "+00:00")
+            ),
+            updated_at=datetime.fromisoformat(
+                str(data["updated_at"]).replace("Z", "+00:00")
+            ),
+            closed_at=closed_at,
+            html_url=str(data["html_url"]),
+            labels=[Label.from_dict(dict(label)) for label in list(data["labels"])],
+        )
+
+
+@dataclass
 class PullRequest:
     """GitHub Pull Request."""
 

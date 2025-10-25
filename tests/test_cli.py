@@ -134,23 +134,31 @@ class TestParseArguments:
             "argv",
             ["pr2md", "https://github.com/owner/repo/pull/123"],
         )
-        owner, repo, pr_number, output_path, verbose = parse_arguments(parser)
+        owner, repo, pr_number, output_path, verbose, depth, no_references = (
+            parse_arguments(parser)
+        )
         assert owner == "owner"
         assert repo == "repo"
         assert pr_number == 123
         assert output_path == "PR-123.md"
         assert verbose is False
+        assert depth == 2  # default value
+        assert no_references is False
 
     def test_parse_arguments_owner_repo_number(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with owner/repo/number format."""
         parser = create_parser()
         mocker.patch.object(sys, "argv", ["pr2md", "owner", "repo", "123"])
-        owner, repo, pr_number, output_path, verbose = parse_arguments(parser)
+        owner, repo, pr_number, output_path, verbose, depth, no_references = (
+            parse_arguments(parser)
+        )
         assert owner == "owner"
         assert repo == "repo"
         assert pr_number == 123
         assert output_path == "PR-123.md"
         assert verbose is False
+        assert depth == 2
+        assert no_references is False
 
     def test_parse_arguments_with_output(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with output file."""
@@ -160,7 +168,9 @@ class TestParseArguments:
             "argv",
             ["pr2md", "https://github.com/owner/repo/pull/123", "-o", "output.md"],
         )
-        _owner, _repo, _pr_number, output_path, _verbose = parse_arguments(parser)
+        _owner, _repo, _pr_number, output_path, _verbose, _depth, _no_references = (
+            parse_arguments(parser)
+        )
         assert output_path == "output.md"
 
     def test_parse_arguments_with_verbose(self, mocker: MockerFixture) -> None:
@@ -171,7 +181,9 @@ class TestParseArguments:
             "argv",
             ["pr2md", "https://github.com/owner/repo/pull/123", "--verbose"],
         )
-        _owner, _repo, _pr_number, _output_path, verbose = parse_arguments(parser)
+        _owner, _repo, _pr_number, _output_path, verbose, _depth, _no_references = (
+            parse_arguments(parser)
+        )
         assert verbose is True
 
     def test_parse_arguments_invalid_count(self, mocker: MockerFixture) -> None:
@@ -205,7 +217,9 @@ class TestParseArguments:
             "argv",
             ["pr2md", "https://github.com/owner/repo/pull/456", "-o"],
         )
-        _owner, _repo, _pr_number, output_path, _verbose = parse_arguments(parser)
+        _owner, _repo, _pr_number, output_path, _verbose, _depth, _no_references = (
+            parse_arguments(parser)
+        )
         assert output_path is None
 
     def test_parse_arguments_auto_generated_filename(
@@ -218,8 +232,36 @@ class TestParseArguments:
             "argv",
             ["pr2md", "owner", "repo", "999"],
         )
-        _owner, _repo, _pr_number, output_path, _verbose = parse_arguments(parser)
+        _owner, _repo, _pr_number, output_path, _verbose, _depth, _no_references = (
+            parse_arguments(parser)
+        )
         assert output_path == "PR-999.md"
+
+    def test_parse_arguments_with_depth(self, mocker: MockerFixture) -> None:
+        """Test parsing arguments with depth flag."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123", "--depth", "5"],
+        )
+        _owner, _repo, _pr_number, _output_path, _verbose, depth, _no_references = (
+            parse_arguments(parser)
+        )
+        assert depth == 5
+
+    def test_parse_arguments_with_no_references(self, mocker: MockerFixture) -> None:
+        """Test parsing arguments with no-references flag."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123", "--no-references"],
+        )
+        _owner, _repo, _pr_number, _output_path, _verbose, _depth, no_references = (
+            parse_arguments(parser)
+        )
+        assert no_references is True
 
 
 class TestExtractPRData:
@@ -239,9 +281,15 @@ class TestExtractPRData:
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
         mocker.patch("pr2md.cli.MarkdownFormatter.format_pr", return_value="# Markdown")
 
-        markdown, success = extract_pr_data("owner", "repo", 123, False)
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data("owner", "repo", 123, False)
+        )
         assert success is True
         assert markdown == "# Markdown"
+        assert pull_request is mock_pr
+        assert comments == []
+        assert reviews == []
+        assert review_comments == []
 
     def test_extract_pr_data_api_error(self, mocker: MockerFixture) -> None:
         """Test PR data extraction with API error."""
@@ -249,9 +297,15 @@ class TestExtractPRData:
         mock_extractor.extract_all.side_effect = GitHubAPIError("API Error")
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
 
-        markdown, success = extract_pr_data("owner", "repo", 123, False)
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data("owner", "repo", 123, False)
+        )
         assert success is False
         assert markdown == ""
+        assert pull_request is None
+        assert comments == []
+        assert reviews == []
+        assert review_comments == []
 
     def test_extract_pr_data_unexpected_error(self, mocker: MockerFixture) -> None:
         """Test PR data extraction with unexpected error."""
@@ -259,9 +313,15 @@ class TestExtractPRData:
         mock_extractor.extract_all.side_effect = Exception("Unexpected error")
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
 
-        markdown, success = extract_pr_data("owner", "repo", 123, False)
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data("owner", "repo", 123, False)
+        )
         assert success is False
         assert markdown == ""
+        assert pull_request is None
+        assert comments == []
+        assert reviews == []
+        assert review_comments == []
 
     def test_extract_pr_data_unexpected_error_verbose(
         self, mocker: MockerFixture
@@ -271,9 +331,15 @@ class TestExtractPRData:
         mock_extractor.extract_all.side_effect = Exception("Unexpected error")
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
 
-        markdown, success = extract_pr_data("owner", "repo", 123, True)
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data("owner", "repo", 123, True)
+        )
         assert success is False
         assert markdown == ""
+        assert pull_request is None
+        assert comments == []
+        assert reviews == []
+        assert review_comments == []
 
     def test_extract_pr_data_format_error(self, mocker: MockerFixture) -> None:
         """Test PR data extraction with formatting error."""
@@ -292,9 +358,15 @@ class TestExtractPRData:
             side_effect=Exception("Format error"),
         )
 
-        markdown, success = extract_pr_data("owner", "repo", 123, False)
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data("owner", "repo", 123, False)
+        )
         assert success is False
         assert markdown == ""
+        assert pull_request is None
+        assert comments == []
+        assert reviews == []
+        assert review_comments == []
 
     def test_extract_pr_data_format_error_verbose(self, mocker: MockerFixture) -> None:
         """Test PR data extraction with formatting error in verbose mode."""
@@ -313,9 +385,15 @@ class TestExtractPRData:
             side_effect=Exception("Format error"),
         )
 
-        markdown, success = extract_pr_data("owner", "repo", 123, True)
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data("owner", "repo", 123, True)
+        )
         assert success is False
         assert markdown == ""
+        assert pull_request is None
+        assert comments == []
+        assert reviews == []
+        assert review_comments == []
 
 
 class TestWriteOutput:
@@ -364,7 +442,12 @@ class TestMain:
         mocker.patch.object(
             sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/123"]
         )
-        mocker.patch("pr2md.cli.extract_pr_data", return_value=("# Markdown", True))
+        mock_pr = MagicMock()
+        mock_pr.body = "Test PR body"
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, mock_pr, [], [], []),
+        )
         mocker.patch("pr2md.cli.write_output", return_value=True)
 
         # Should not raise SystemExit
@@ -375,7 +458,9 @@ class TestMain:
         mocker.patch.object(
             sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/123"]
         )
-        mocker.patch("pr2md.cli.extract_pr_data", return_value=("", False))
+        mocker.patch(
+            "pr2md.cli.extract_pr_data", return_value=("", False, None, [], [], [])
+        )
 
         with pytest.raises(SystemExit) as exc_info:
             main()
@@ -386,7 +471,11 @@ class TestMain:
         mocker.patch.object(
             sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/123"]
         )
-        mocker.patch("pr2md.cli.extract_pr_data", return_value=("# Markdown", True))
+        mock_pr = MagicMock()
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, mock_pr, [], [], []),
+        )
         mocker.patch("pr2md.cli.write_output", return_value=False)
 
         with pytest.raises(SystemExit) as exc_info:
