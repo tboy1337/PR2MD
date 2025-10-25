@@ -163,62 +163,12 @@ For most use cases, unauthenticated access is sufficient as the tool makes only 
 
 **Future Enhancement**: Authentication support is planned for a future release to enable higher rate limits and access to private repositories.
 
-## Development
-
-### Setup Development Environment
-
-For development work, you'll need to install from source:
-
-```bash
-# Clone the repository
-git clone https://github.com/tboy1337/PR2MD.git
-cd PR2MD
-
-# Install the package in editable mode with development dependencies
-pip install -e .
-pip install -r requirements-dev.txt
-```
-
-### Design Principles
-
-- **Type Safety**: Full type annotations throughout the codebase
-- **Error Handling**: Graceful handling of API errors and edge cases
-- **Logging**: Comprehensive logging for debugging and monitoring
-- **Testability**: Modular design with clear separation of concerns
-- **Extensibility**: Easy to add new features or output formats
-
-## Use Cases
-
-- **Code Review Documentation**: Archive code reviews for compliance or historical reference
-- **Offline Analysis**: Review PRs without internet connectivity
-- **Pull Request Templates**: Learn from well-structured PRs
-- **Change Management**: Document significant changes in projects
-- **Training Materials**: Create educational resources from real-world code reviews
-- **Audit Trails**: Maintain records of development decisions
-- **Report Generation**: Include PR details in project reports
-
 ## Limitations
 
 - Currently supports only public GitHub repositories (authentication coming soon)
 - Rate limited by GitHub API (60 requests/hour without authentication)
 - Requires internet connection to fetch data
 - Large PRs with extensive diffs may generate very large Markdown files
-
-## Roadmap
-
-- [ ] GitHub authentication support (personal access tokens)
-- [ ] Support for GitHub Enterprise
-- [ ] Private repository access
-- [ ] Batch processing of multiple PRs
-- [ ] Custom output templates
-- [ ] Additional output formats (HTML, PDF)
-- [ ] Diff filtering and summarization
-- [ ] PR comparison tool
-- [ ] Integration with CI/CD pipelines
-
-## Contributing
-
-This project is maintained by tboy1337. Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/tboy1337/PR2MD/issues).
 
 ## License
 
