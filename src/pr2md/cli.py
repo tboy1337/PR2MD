@@ -10,6 +10,9 @@ from typing import Optional
 from pr2md.formatter import MarkdownFormatter
 from pr2md.pr_extractor import GitHubAPIError, GitHubPRExtractor
 
+# Sentinel value for stdout output
+_STDOUT_SENTINEL = "__STDOUT__"
+
 
 def setup_logging(verbose: bool = False) -> None:
     """
@@ -62,8 +65,9 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s https://github.com/owner/repo/pull/123
-  %(prog)s owner repo 123
+  %(prog)s https://github.com/owner/repo/pull/123          # Saves to PR-123.md
+  %(prog)s owner repo 123                                  # Saves to PR-123.md
+  %(prog)s https://github.com/owner/repo/pull/123 -o       # Outputs to stdout
   %(prog)s https://github.com/owner/repo/pull/123 -o output.md
   %(prog)s owner repo 123 --output pr-details.md --verbose
         """,
@@ -81,8 +85,12 @@ Examples:
     parser.add_argument(
         "-o",
         "--output",
-        type=str,
-        help="Output file path (default: stdout)",
+        nargs="?",
+        const=_STDOUT_SENTINEL,
+        help=(
+            "Output file path (default: PR-{number}.md). "
+            "Use -o without filename for stdout"
+        ),
         default=None,
     )
 
@@ -135,7 +143,18 @@ def parse_arguments(
         logger.error("Error parsing PR identifier: %s", err)
         sys.exit(1)
 
-    output_path: Optional[str] = str(args.output) if args.output else None
+    # Handle output path: None -> default filename,
+    # sentinel -> stdout, else -> provided path
+    if args.output is None:
+        # No -o specified, use default filename
+        output_path = f"PR-{pr_number}.md"
+    elif args.output == _STDOUT_SENTINEL:
+        # -o without filename, use stdout (None value)
+        output_path = None
+    else:
+        # -o with filename, use provided path
+        output_path = str(args.output)
+
     verbose: bool = bool(args.verbose)
 
     return owner, repo, pr_number, output_path, verbose

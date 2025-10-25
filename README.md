@@ -56,18 +56,21 @@ pip install -e .
 After installing via pip, you can immediately start using PR2MD:
 
 ```bash
-# Extract a PR by URL
+# Extract a PR by URL (saves to PR-123.md)
 pr2md https://github.com/owner/repo/pull/123
 
-# Save to a file
+# Save to a custom filename
 pr2md https://github.com/owner/repo/pull/123 -o output.md
+
+# Output to console/stdout
+pr2md https://github.com/owner/repo/pull/123 -o
 ```
 
 ## Usage
 
 ### Basic Usage
 
-Extract a PR using its URL:
+Extract a PR using its URL (automatically saves to `PR-123.md`):
 
 ```bash
 pr2md https://github.com/owner/repo/pull/123
@@ -79,13 +82,22 @@ Or specify the owner, repository, and PR number separately:
 pr2md owner repo 123
 ```
 
-### Save to File
+### Save to Custom Filename
 
-Output the Markdown to a file instead of stdout:
+Output the Markdown to a custom filename:
 
 ```bash
 pr2md https://github.com/owner/repo/pull/123 -o pr-details.md
 pr2md owner repo 123 --output pr-analysis.md
+```
+
+### Output to Console
+
+Output to stdout instead of saving to a file:
+
+```bash
+pr2md https://github.com/owner/repo/pull/123 -o
+pr2md owner repo 123 --output
 ```
 
 ### Verbose Logging
@@ -146,11 +158,17 @@ The generated Markdown document includes:
 ## Example
 
 ```bash
-# Extract PR #42 from the PR2MD repository
-pr2md tboy1337 PR2MD 42 -o pr-42.md
+# Extract PR #42 from the PR2MD repository (saves to PR-42.md)
+pr2md tboy1337 PR2MD 42
 ```
 
-This creates a file `pr-42.md` containing all the PR information in a beautifully formatted Markdown document.
+This creates a file `PR-42.md` containing all the PR information in a beautifully formatted Markdown document.
+
+If you want a custom filename:
+
+```bash
+pr2md tboy1337 PR2MD 42 -o pr-42-analysis.md
+```
 
 ## GitHub API Rate Limiting
 

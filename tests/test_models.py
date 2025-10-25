@@ -417,7 +417,7 @@ class TestUserHypothesis:
         user = User.from_dict(user_dict)
         assert isinstance(user, User)
         assert user.login == str(user_dict["login"])
-        assert user.id == int(user_dict["id"])
+        assert user.id == int(user_dict["id"])  # type: ignore[call-overload]
         assert user.avatar_url == str(user_dict["avatar_url"])
         assert user.html_url == str(user_dict["html_url"])
 
@@ -476,7 +476,7 @@ class TestCommentHypothesis:
         """Test Comment.from_dict with property-based testing."""
         comment = Comment.from_dict(comment_dict)
         assert isinstance(comment, Comment)
-        assert comment.id == int(comment_dict["id"])
+        assert comment.id == int(comment_dict["id"])  # type: ignore[call-overload]
         assert isinstance(comment.user, User)
         assert comment.body == str(comment_dict["body"])
         assert isinstance(comment.created_at, datetime)
@@ -504,7 +504,7 @@ class TestReviewCommentHypothesis:
         """Test ReviewComment.from_dict with property-based testing."""
         review_comment = ReviewComment.from_dict(review_comment_dict)
         assert isinstance(review_comment, ReviewComment)
-        assert review_comment.id == int(review_comment_dict["id"])
+        assert review_comment.id == int(review_comment_dict["id"])  # type: ignore[call-overload]
         assert isinstance(review_comment.user, User)
         assert review_comment.body == str(review_comment_dict["body"])
         assert review_comment.path == str(review_comment_dict["path"])
@@ -520,13 +520,15 @@ class TestReviewCommentHypothesis:
         if review_comment_dict["position"] is None:
             assert review_comment.position is None
         else:
-            assert review_comment.position == int(review_comment_dict["position"])
+            assert review_comment.position == int(
+                review_comment_dict["position"]  # type: ignore[call-overload]
+            )
         # in_reply_to_id can be None
         if review_comment_dict["in_reply_to_id"] is None:
             assert review_comment.in_reply_to_id is None
         else:
             assert review_comment.in_reply_to_id == int(
-                review_comment_dict["in_reply_to_id"]
+                review_comment_dict["in_reply_to_id"]  # type: ignore[call-overload]
             )
 
 
@@ -539,7 +541,7 @@ class TestReviewHypothesis:
         """Test Review.from_dict with property-based testing."""
         review = Review.from_dict(review_dict)
         assert isinstance(review, Review)
-        assert review.id == int(review_dict["id"])
+        assert review.id == int(review_dict["id"])  # type: ignore[call-overload]
         assert isinstance(review.user, User)
         assert review.state == str(review_dict["state"])
 
@@ -594,7 +596,7 @@ class TestPullRequestHypothesis:
         """Test PullRequest.from_dict with property-based testing."""
         pull_request = PullRequest.from_dict(pr_dict)
         assert isinstance(pull_request, PullRequest)
-        assert pull_request.number == int(pr_dict["number"])
+        assert pull_request.number == int(pr_dict["number"])  # type: ignore[call-overload]
         assert pull_request.title == str(pr_dict["title"])
         assert pull_request.state == str(pr_dict["state"])
         assert isinstance(pull_request.user, User)

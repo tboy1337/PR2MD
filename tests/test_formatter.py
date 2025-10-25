@@ -411,15 +411,15 @@ class TestMarkdownFormatterHypothesis:
         comment_objects = [
             Comment(
                 id=i,
-                user=User(
+                user=                User(
                     login="test",
                     id=123,
                     avatar_url="https://example.com/avatar.jpg",
                     html_url="https://github.com/test",
                 ),
                 body=str(c["body"]),
-                created_at=c["created_at"],  # type: ignore[arg-type]
-                updated_at=c["created_at"],  # type: ignore[arg-type]
+                created_at=c["created_at"],
+                updated_at=c["created_at"],
                 html_url=f"https://github.com/owner/repo/issues/1#issuecomment-{i}",
             )
             for i, c in enumerate(comments)

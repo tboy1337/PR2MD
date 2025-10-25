@@ -138,7 +138,7 @@ class TestParseArguments:
         assert owner == "owner"
         assert repo == "repo"
         assert pr_number == 123
-        assert output_path is None
+        assert output_path == "PR-123.md"
         assert verbose is False
 
     def test_parse_arguments_owner_repo_number(self, mocker: MockerFixture) -> None:
@@ -149,7 +149,7 @@ class TestParseArguments:
         assert owner == "owner"
         assert repo == "repo"
         assert pr_number == 123
-        assert output_path is None
+        assert output_path == "PR-123.md"
         assert verbose is False
 
     def test_parse_arguments_with_output(self, mocker: MockerFixture) -> None:
@@ -194,6 +194,32 @@ class TestParseArguments:
         mocker.patch.object(sys, "argv", ["pr2md", "owner", "repo", "not-a-number"])
         with pytest.raises(SystemExit):
             parse_arguments(parser)
+
+    def test_parse_arguments_output_without_filename(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test parsing arguments with -o flag but no filename (stdout)."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/456", "-o"],
+        )
+        _owner, _repo, _pr_number, output_path, _verbose = parse_arguments(parser)
+        assert output_path is None
+
+    def test_parse_arguments_auto_generated_filename(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test that auto-generated filename follows PR-{number}.md format."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "owner", "repo", "999"],
+        )
+        _owner, _repo, _pr_number, output_path, _verbose = parse_arguments(parser)
+        assert output_path == "PR-999.md"
 
 
 class TestExtractPRData:
