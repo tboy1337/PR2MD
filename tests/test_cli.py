@@ -20,7 +20,7 @@ from pr2md.cli import (
     setup_logging,
     write_output,
 )
-from pr2md.pr_extractor import GitHubAPIError
+from pr2md.exceptions import GitHubAPIError
 
 
 class TestCLI:

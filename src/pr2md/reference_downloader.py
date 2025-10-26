@@ -4,8 +4,9 @@ import logging
 from pathlib import Path
 from typing import Literal, Optional
 
+from pr2md.exceptions import GitHubAPIError
 from pr2md.formatter import MarkdownFormatter
-from pr2md.issue_extractor import GitHubAPIError, GitHubIssueExtractor
+from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
 from pr2md.reference_parser import GitHubReference, ReferenceParser

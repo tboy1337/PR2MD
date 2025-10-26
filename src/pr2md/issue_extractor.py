@@ -5,13 +5,10 @@ from typing import Any, Optional
 
 import requests
 
+from pr2md.exceptions import GitHubAPIError
 from pr2md.models import Comment, Issue
 
 logger = logging.getLogger(__name__)
-
-
-class GitHubAPIError(Exception):
-    """Exception raised for GitHub API errors."""
 
 
 class GitHubIssueExtractor:

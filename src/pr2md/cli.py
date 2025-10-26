@@ -7,10 +7,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from pr2md.exceptions import GitHubAPIError
 from pr2md.formatter import MarkdownFormatter
 from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
-from pr2md.pr_extractor import GitHubAPIError, GitHubPRExtractor
+from pr2md.pr_extractor import GitHubPRExtractor
 from pr2md.reference_downloader import ReferenceDownloader
 
 # Sentinel value for stdout output

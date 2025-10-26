@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from pytest_mock import MockerFixture
 
-from pr2md.issue_extractor import GitHubAPIError
+from pr2md.exceptions import GitHubAPIError
 from pr2md.models import Comment, Issue, PullRequest, User
 from pr2md.reference_downloader import ReferenceDownloader
 from pr2md.reference_parser import GitHubReference

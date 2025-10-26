@@ -6,7 +6,8 @@
 import pytest
 from pytest_mock import MockerFixture
 
-from pr2md.pr_extractor import GitHubAPIError, GitHubPRExtractor
+from pr2md.exceptions import GitHubAPIError
+from pr2md.pr_extractor import GitHubPRExtractor
 
 
 class TestGitHubPRExtractor:
