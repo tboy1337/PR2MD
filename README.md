@@ -120,6 +120,22 @@ Enable detailed logging for debugging:
 pr2md https://github.com/owner/repo/pull/123 --verbose
 ```
 
+### Reference Downloading
+
+By default, PR2MD automatically scans for and downloads referenced PRs and issues mentioned in the main PR/Issue. You can configure this behavior:
+
+```bash
+# Set maximum recursion depth for downloading references (default: 2)
+pr2md https://github.com/owner/repo/pull/123 --depth 3
+
+# Disable automatic downloading of referenced PRs and issues
+pr2md https://github.com/owner/repo/pull/123 --no-references
+```
+
+The `--depth` option controls how many levels deep the tool will follow references. For example, with `--depth 2`, if PR #123 references PR #456, and PR #456 references PR #789, the tool will download all three PRs. With `--depth 1`, it would only download PR #123 and PR #456.
+
+**Note**: Reference downloading only works when using the default auto-naming (e.g., `PR-123.md`). If you specify a custom output filename with `-o`, reference downloading is automatically disabled.
+
 ### Help
 
 View all available options:
