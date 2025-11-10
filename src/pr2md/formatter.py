@@ -148,6 +148,19 @@ class MarkdownFormatter:
             key=lambda r: r.submitted_at if r.submitted_at else r.user.login,
         )
 
+        # Group reviews by user to detect status progressions
+        reviews_by_user: dict[str, list[Review]] = defaultdict(list)
+        for review in sorted_reviews:
+            reviews_by_user[review.user.login].append(review)
+
+        # Track which reviews are superseded
+        superseded_review_ids: set[int] = set()
+        for user_reviews in reviews_by_user.values():
+            if len(user_reviews) > 1:
+                # All but the last review are superseded
+                for review in user_reviews[:-1]:
+                    superseded_review_ids.add(review.id)
+
         formatted_reviews = []
         for review in sorted_reviews:
             submitted_str = (
@@ -167,16 +180,47 @@ class MarkdownFormatter:
 
             body_str = review.body if review.body else "*No comment provided.*"
 
+            # Check if this review is superseded
+            superseded_note = ""
+            if review.id in superseded_review_ids:
+                user_reviews = reviews_by_user[review.user.login]
+                latest_review = user_reviews[-1]
+                latest_state = latest_review.state.replace("_", " ")
+                latest_emoji = state_emoji.get(latest_review.state, "")
+                superseded_note = (
+                    f"\n\n> **Note:** This review was superseded by a later "
+                    f"{latest_emoji} **{latest_state}** review from the same reviewer."
+                )
+
             # pylint: disable=line-too-long
             formatted_review = f"""### {emoji} [{review.user.login}]({review.user.html_url}) {review.state.replace("_", " ")} on {submitted_str}
 
-{body_str}
+{body_str}{superseded_note}
 
 *[View on GitHub]({review.html_url})*"""
             # pylint: enable=line-too-long
             formatted_reviews.append(formatted_review)
 
         return "## Reviews\n\n" + "\n\n---\n\n".join(formatted_reviews)
+
+    @staticmethod
+    def _is_comment_resolved(comment: ReviewComment) -> bool:
+        """
+        Check if a review comment appears to be resolved.
+
+        Note: GitHub's REST API does not provide a direct 'resolved' field.
+        This method uses heuristics to detect potential resolution status.
+
+        Args:
+            comment: Review comment to check
+
+        Returns:
+            True if comment appears resolved (currently always False due to API limitations)
+        """
+        # GitHub REST API doesn't provide resolved status directly
+        # This is a placeholder for future GraphQL API integration
+        # or when REST API adds this field
+        return False
 
     @staticmethod
     def _format_review_comments(review_comments: list[ReviewComment]) -> str:
@@ -205,9 +249,14 @@ class MarkdownFormatter:
                 if comment.in_reply_to_id:
                     reply_str = f" *(in reply to comment #{comment.in_reply_to_id})*"
 
+                # Check if comment is resolved (future feature)
+                resolved_indicator = ""
+                if MarkdownFormatter._is_comment_resolved(comment):
+                    resolved_indicator = " ✅ **(Resolved)**"
+
                 comment_time = comment.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
                 # pylint: disable=line-too-long
-                formatted_comment = f"""#### [{comment.user.login}]({comment.user.html_url}) commented on {comment_time}{reply_str}
+                formatted_comment = f"""#### [{comment.user.login}]({comment.user.html_url}) commented on {comment_time}{reply_str}{resolved_indicator}
 
 **Code context:**
 ```diff

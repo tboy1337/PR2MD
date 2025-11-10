@@ -174,6 +174,115 @@ class TestMarkdownFormatter:
         reviews = MarkdownFormatter._format_reviews([])
         assert "*No reviews submitted.*" in reviews
 
+    def test_format_reviews_single_reviewer_progression(
+        self, sample_user: User
+    ) -> None:
+        """Test review formatting with status progression from same reviewer."""
+        # First review: CHANGES_REQUESTED
+        review1 = Review(
+            id=100,
+            user=sample_user,
+            body="Please fix the tests",
+            state="CHANGES_REQUESTED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-100",
+            submitted_at=datetime(2025, 1, 2, 10, 0, 0, tzinfo=timezone.utc),
+            commit_id="abc123",
+        )
+        # Second review: APPROVED (same reviewer)
+        review2 = Review(
+            id=101,
+            user=sample_user,
+            body="LGTM now",
+            state="APPROVED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-101",
+            submitted_at=datetime(2025, 1, 2, 14, 0, 0, tzinfo=timezone.utc),
+            commit_id="def456",
+        )
+
+        formatted = MarkdownFormatter._format_reviews([review1, review2])
+        assert "## Reviews" in formatted
+        assert "CHANGES REQUESTED" in formatted
+        assert "APPROVED" in formatted
+        assert "🔴" in formatted  # CHANGES_REQUESTED emoji
+        assert "✅" in formatted  # APPROVED emoji
+        # Check for superseded note on first review
+        assert "superseded by a later" in formatted
+        assert "✅ **APPROVED** review" in formatted
+
+    def test_format_reviews_multiple_reviewers_no_progression(
+        self, sample_user: User
+    ) -> None:
+        """Test review formatting with different reviewers (no progression)."""
+        user2 = User(
+            login="reviewer2",
+            id=456,
+            avatar_url="https://example.com/avatar2.jpg",
+            html_url="https://github.com/reviewer2",
+        )
+
+        review1 = Review(
+            id=200,
+            user=sample_user,
+            body="Please fix",
+            state="CHANGES_REQUESTED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-200",
+            submitted_at=datetime(2025, 1, 2, 10, 0, 0, tzinfo=timezone.utc),
+            commit_id="abc123",
+        )
+        review2 = Review(
+            id=201,
+            user=user2,
+            body="LGTM",
+            state="APPROVED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-201",
+            submitted_at=datetime(2025, 1, 2, 14, 0, 0, tzinfo=timezone.utc),
+            commit_id="def456",
+        )
+
+        formatted = MarkdownFormatter._format_reviews([review1, review2])
+        assert "## Reviews" in formatted
+        # Should NOT have superseded note since different reviewers
+        assert "superseded" not in formatted
+
+    def test_format_reviews_three_from_same_reviewer(self, sample_user: User) -> None:
+        """Test review formatting with three reviews from same reviewer."""
+        review1 = Review(
+            id=300,
+            user=sample_user,
+            body="Needs work",
+            state="CHANGES_REQUESTED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-300",
+            submitted_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            commit_id="abc123",
+        )
+        review2 = Review(
+            id=301,
+            user=sample_user,
+            body="Better but still issues",
+            state="COMMENTED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-301",
+            submitted_at=datetime(2025, 1, 2, 10, 0, 0, tzinfo=timezone.utc),
+            commit_id="def456",
+        )
+        review3 = Review(
+            id=302,
+            user=sample_user,
+            body="Perfect!",
+            state="APPROVED",
+            html_url="https://github.com/owner/repo/pull/1#pullrequestreview-302",
+            submitted_at=datetime(2025, 1, 3, 10, 0, 0, tzinfo=timezone.utc),
+            commit_id="ghi789",
+        )
+
+        formatted = MarkdownFormatter._format_reviews([review1, review2, review3])
+        # Both first and second reviews should be marked as superseded
+        superseded_count = formatted.count("superseded by a later")
+        assert superseded_count == 2
+        # All three reviews should be present
+        assert "Needs work" in formatted
+        assert "Better but still issues" in formatted
+        assert "Perfect!" in formatted
+
     def test_format_review_comments(self, sample_review_comment: ReviewComment) -> None:
         """Test review comments formatting."""
         formatted = MarkdownFormatter._format_review_comments([sample_review_comment])
@@ -186,6 +295,38 @@ class TestMarkdownFormatter:
         """Test review comments formatting when empty."""
         formatted = MarkdownFormatter._format_review_comments([])
         assert "*No review comments on code.*" in formatted
+
+    def test_format_review_comments_with_new_fields(self, sample_user: User) -> None:
+        """Test review comments formatting with new optional fields."""
+        review_comment = ReviewComment(
+            id=999,
+            user=sample_user,
+            body="This needs improvement",
+            path="src/file.py",
+            position=10,
+            original_position=10,
+            commit_id="abc123",
+            original_commit_id="abc123",
+            diff_hunk="@@ -1,3 +1,3 @@\n line1\n-line2\n+line2_modified",
+            created_at=datetime(2025, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+            html_url="https://github.com/owner/repo/pull/1#discussion_r999",
+            in_reply_to_id=None,
+            subject_type="line",
+            start_line=5,
+            line=10,
+            start_side="RIGHT",
+            side="RIGHT",
+        )
+        formatted = MarkdownFormatter._format_review_comments([review_comment])
+        assert "## Review Comments" in formatted
+        assert "File: `src/file.py`" in formatted
+        assert "This needs improvement" in formatted
+
+    def test_is_comment_resolved(self, sample_review_comment: ReviewComment) -> None:
+        """Test resolved comment detection."""
+        # Currently always returns False due to API limitations
+        assert MarkdownFormatter._is_comment_resolved(sample_review_comment) is False
 
     def test_format_pr_complete(
         self,

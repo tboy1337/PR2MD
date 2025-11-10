@@ -134,6 +134,70 @@ class TestReviewComment:
         assert review_comment.in_reply_to_id == 789
         assert review_comment.position is None
 
+    def test_from_dict_with_optional_fields(self) -> None:
+        """Test ReviewComment creation with new optional fields."""
+        data = {
+            "id": 791,
+            "user": {
+                "login": "reviewer",
+                "id": 111,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/reviewer",
+            },
+            "body": "Comment with optional fields",
+            "path": "file.py",
+            "position": 15,
+            "original_position": 15,
+            "commit_id": "abc123",
+            "original_commit_id": "abc123",
+            "diff_hunk": "@@ -1,3 +1,3 @@\n line1\n-line2\n+line2_modified",
+            "created_at": "2025-01-01T13:45:00Z",
+            "updated_at": "2025-01-01T13:45:00Z",
+            "html_url": "https://github.com/owner/repo/pull/1#discussion_r791",
+            "in_reply_to_id": None,
+            "subject_type": "line",
+            "start_line": 10,
+            "line": 15,
+            "start_side": "RIGHT",
+            "side": "RIGHT",
+        }
+        review_comment = ReviewComment.from_dict(data)
+        assert review_comment.subject_type == "line"
+        assert review_comment.start_line == 10
+        assert review_comment.line == 15
+        assert review_comment.start_side == "RIGHT"
+        assert review_comment.side == "RIGHT"
+
+    def test_from_dict_without_optional_fields(self) -> None:
+        """Test ReviewComment creation without new optional fields."""
+        data = {
+            "id": 792,
+            "user": {
+                "login": "reviewer",
+                "id": 111,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/reviewer",
+            },
+            "body": "Comment without optional fields",
+            "path": "file.py",
+            "position": 20,
+            "original_position": 20,
+            "commit_id": "abc123",
+            "original_commit_id": "abc123",
+            "diff_hunk": "@@ -1,3 +1,3 @@\n line1\n-line2\n+line2_modified",
+            "created_at": "2025-01-01T14:00:00Z",
+            "updated_at": "2025-01-01T14:00:00Z",
+            "html_url": "https://github.com/owner/repo/pull/1#discussion_r792",
+            "in_reply_to_id": None,
+        }
+        review_comment = ReviewComment.from_dict(data)
+        # Optional fields should default to None
+        assert review_comment.subject_type is None
+        assert review_comment.start_line is None
+        assert review_comment.line is None
+        assert review_comment.start_side is None
+        assert review_comment.side is None
+
 
 class TestReview:
     """Tests for Review model."""

@@ -92,6 +92,11 @@ class ReviewComment:
     updated_at: datetime
     html_url: str
     in_reply_to_id: Optional[int]
+    subject_type: Optional[str] = None
+    start_line: Optional[int] = None
+    line: Optional[int] = None
+    start_side: Optional[str] = None
+    side: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ReviewComment":
@@ -120,6 +125,13 @@ class ReviewComment:
             in_reply_to_id=(
                 int(data["in_reply_to_id"]) if data.get("in_reply_to_id") else None
             ),
+            subject_type=(
+                str(data["subject_type"]) if data.get("subject_type") else None
+            ),
+            start_line=int(data["start_line"]) if data.get("start_line") else None,
+            line=int(data["line"]) if data.get("line") else None,
+            start_side=str(data["start_side"]) if data.get("start_side") else None,
+            side=str(data["side"]) if data.get("side") else None,
         )
 
 
