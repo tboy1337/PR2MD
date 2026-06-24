@@ -181,6 +181,100 @@ class ReferenceDownloader:
         logger.info("Found %d references in Issue #%d", len(references), issue.number)
         return references
 
+    def _log_download_error(
+        self,
+        err: Exception,
+        *,
+        resource_label: str,
+        owner: str,
+        repo: str,
+        number: int,
+    ) -> None:
+        """Log a download failure."""
+        if isinstance(err, GitHubAPIError):
+            logger.error(
+                "Failed to download %s %s/%s #%d: %s",
+                resource_label,
+                owner,
+                repo,
+                number,
+                err,
+            )
+            return
+        logger.error(
+            "Unexpected error downloading %s %s/%s #%d: %s",
+            resource_label,
+            owner,
+            repo,
+            number,
+            err,
+        )
+        if self.verbose:
+            logger.exception("Full traceback:")
+
+    def _format_pr_reference(
+        self, owner: str, repo: str, number: int
+    ) -> tuple[str, set[GitHubReference]]:
+        """Download and format a pull request reference."""
+        with GitHubPRExtractor(owner, repo, number, client=self._client) as extractor:
+            pull_request, comments, reviews, review_comments, diff = (
+                extractor.extract_all()
+            )
+        markdown = MarkdownFormatter.format_pr(
+            pull_request, comments, reviews, review_comments, diff
+        )
+        references = self.extract_references_from_pr(
+            pull_request, comments, reviews, review_comments
+        )
+        return markdown, references
+
+    def _format_issue_reference(
+        self, owner: str, repo: str, number: int
+    ) -> tuple[str, set[GitHubReference]]:
+        """Download and format an issue reference."""
+        with GitHubIssueExtractor(
+            owner, repo, number, client=self._client
+        ) as extractor:
+            issue, comments = extractor.extract_all()
+        markdown = MarkdownFormatter.format_issue(issue, comments)
+        references = self.extract_references_from_issue(issue, comments)
+        return markdown, references
+
+    def _download_and_format(
+        self,
+        ref_type: Literal["issue", "pr"],
+        owner: str,
+        repo: str,
+        number: int,
+    ) -> tuple[str, Optional[set[GitHubReference]]]:
+        """Download and format a PR or issue reference."""
+        resource_label = "PR" if ref_type == "pr" else "Issue"
+        logger.info("Downloading %s %s/%s #%d", resource_label, owner, repo, number)
+
+        try:
+            if ref_type == "pr":
+                markdown, references = self._format_pr_reference(owner, repo, number)
+            else:
+                markdown, references = self._format_issue_reference(owner, repo, number)
+            return markdown, references
+        except (
+            GitHubAPIError,
+            requests.RequestException,
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ) as err:
+            self._log_download_error(
+                err,
+                resource_label=resource_label,
+                owner=owner,
+                repo=repo,
+                number=number,
+            )
+            return "", None
+
     def download_pr(
         self, owner: str, repo: str, pr_number: int
     ) -> tuple[str, Optional[set[GitHubReference]]]:
@@ -196,48 +290,7 @@ class ReferenceDownloader:
             Tuple of (markdown content, set of references found)
             Returns (empty string, None) if download fails
         """
-        logger.info("Downloading PR %s/%s #%d", owner, repo, pr_number)
-
-        try:
-            with GitHubPRExtractor(
-                owner, repo, pr_number, client=self._client
-            ) as extractor:
-                pull_request, comments, reviews, review_comments, diff = (
-                    extractor.extract_all()
-                )
-
-            markdown = MarkdownFormatter.format_pr(
-                pull_request, comments, reviews, review_comments, diff
-            )
-
-            references = self.extract_references_from_pr(
-                pull_request, comments, reviews, review_comments
-            )
-
-            return markdown, references
-        except GitHubAPIError as err:
-            logger.error(
-                "Failed to download PR %s/%s #%d: %s", owner, repo, pr_number, err
-            )
-            return "", None
-        except (
-            requests.RequestException,
-            OSError,
-            json.JSONDecodeError,
-            KeyError,
-            ValueError,
-            TypeError,
-        ) as err:
-            logger.error(
-                "Unexpected error downloading PR %s/%s #%d: %s",
-                owner,
-                repo,
-                pr_number,
-                err,
-            )
-            if self.verbose:
-                logger.exception("Full traceback:")
-            return "", None
+        return self._download_and_format("pr", owner, repo, pr_number)
 
     def download_issue(
         self, owner: str, repo: str, issue_number: int
@@ -254,46 +307,7 @@ class ReferenceDownloader:
             Tuple of (markdown content, set of references found)
             Returns (empty string, None) if download fails
         """
-        logger.info("Downloading Issue %s/%s #%d", owner, repo, issue_number)
-
-        try:
-            with GitHubIssueExtractor(
-                owner, repo, issue_number, client=self._client
-            ) as extractor:
-                issue, comments = extractor.extract_all()
-
-            markdown = MarkdownFormatter.format_issue(issue, comments)
-
-            references = self.extract_references_from_issue(issue, comments)
-
-            return markdown, references
-        except GitHubAPIError as err:
-            logger.error(
-                "Failed to download Issue %s/%s #%d: %s",
-                owner,
-                repo,
-                issue_number,
-                err,
-            )
-            return "", None
-        except (
-            requests.RequestException,
-            OSError,
-            json.JSONDecodeError,
-            KeyError,
-            ValueError,
-            TypeError,
-        ) as err:
-            logger.error(
-                "Unexpected error downloading Issue %s/%s #%d: %s",
-                owner,
-                repo,
-                issue_number,
-                err,
-            )
-            if self.verbose:
-                logger.exception("Full traceback:")
-            return "", None
+        return self._download_and_format("issue", owner, repo, issue_number)
 
     def determine_ref_type(
         self, owner: str, repo: str, number: int
@@ -371,8 +385,6 @@ class ReferenceDownloader:
                 from_url=reference.from_url,
             )
 
-        self.downloaded.add(reference)
-
         if ref_type == "pr":
             markdown, found_refs = self.download_pr(
                 reference.owner, reference.repo, reference.number
@@ -400,6 +412,7 @@ class ReferenceDownloader:
             self.record_skipped_reference(reference, f"Failed to save file: {err}")
             return []
 
+        self.downloaded.add(reference)
         downloaded_files = [filename]
 
         if found_refs and current_depth < self.max_depth:
@@ -423,7 +436,11 @@ class ReferenceDownloader:
         logger.info("Starting download of %d references", len(references))
         all_downloaded: list[str] = []
 
-        for reference in references:
+        sorted_refs = sorted(
+            references,
+            key=lambda ref: (ref.owner, ref.repo, ref.ref_type, ref.number),
+        )
+        for reference in sorted_refs:
             downloaded = self.download_reference(reference, current_depth=1)
             all_downloaded.extend(downloaded)
 

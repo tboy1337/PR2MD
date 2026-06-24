@@ -5,7 +5,16 @@ from datetime import datetime, timezone
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from pr2md.models import Comment, Issue, Label, PullRequest, Review, ReviewComment, User
+from pr2md.models import (
+    DELETED_USER,
+    Comment,
+    Issue,
+    Label,
+    PullRequest,
+    Review,
+    ReviewComment,
+    User,
+)
 
 
 class TestUser:
@@ -92,6 +101,20 @@ class TestComment:
         }
         comment = Comment.from_dict(data)
         assert comment.body == ""
+
+    def test_from_dict_deleted_user(self) -> None:
+        """Test Comment creation when user is null (deleted account)."""
+        data = {
+            "id": 457,
+            "user": None,
+            "body": "Comment from deleted user",
+            "created_at": "2025-01-01T12:00:00Z",
+            "updated_at": "2025-01-01T12:30:00Z",
+            "html_url": "https://github.com/owner/repo/issues/1#issuecomment-457",
+        }
+        comment = Comment.from_dict(data)
+        assert comment.user == DELETED_USER
+        assert comment.user.login == "[deleted user]"
 
 
 class TestIssue:
@@ -241,6 +264,37 @@ class TestReviewComment:
         assert review_comment.line == 15
         assert review_comment.start_side == "RIGHT"
         assert review_comment.side == "RIGHT"
+
+    def test_from_dict_falsy_zero_positions(self) -> None:
+        """Test ReviewComment preserves zero-valued numeric fields."""
+        data = {
+            "id": 793,
+            "user": {
+                "login": "reviewer",
+                "id": 111,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/reviewer",
+            },
+            "body": "Line zero comment",
+            "path": "file.py",
+            "position": 0,
+            "original_position": 0,
+            "commit_id": "abc123",
+            "original_commit_id": "abc123",
+            "diff_hunk": "@@ -1,3 +1,3 @@\n line1",
+            "created_at": "2025-01-01T13:45:00Z",
+            "updated_at": "2025-01-01T13:45:00Z",
+            "html_url": "https://github.com/owner/repo/pull/1#discussion_r793",
+            "in_reply_to_id": 0,
+            "start_line": 0,
+            "line": 0,
+        }
+        review_comment = ReviewComment.from_dict(data)
+        assert review_comment.position == 0
+        assert review_comment.original_position == 0
+        assert review_comment.in_reply_to_id == 0
+        assert review_comment.start_line == 0
+        assert review_comment.line == 0
 
     def test_from_dict_without_optional_fields(self) -> None:
         """Test ReviewComment creation without new optional fields."""

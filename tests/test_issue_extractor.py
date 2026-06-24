@@ -151,3 +151,17 @@ class TestGitHubIssueExtractor:
         with GitHubIssueExtractor("owner", "repo", 123) as extractor:
             mock_close = mocker.patch.object(extractor._client, "close")
         mock_close.assert_called_once()
+
+    def test_shared_client_not_closed_on_exit(self, mocker: MockerFixture) -> None:
+        """Test injected client is not closed when extractor exits."""
+        from pr2md.github_client import GitHubClient
+
+        shared_client = GitHubClient()
+        extractor = GitHubIssueExtractor("owner", "repo", 123, client=shared_client)
+        mock_close = mocker.patch.object(shared_client, "close")
+
+        with extractor:
+            pass
+
+        mock_close.assert_not_called()
+        shared_client.close()

@@ -428,3 +428,30 @@ class TestReferenceDownloader:
         with ReferenceDownloader("owner", "repo", max_depth=1) as downloader:
             mock_close = mocker.patch.object(downloader._client, "close")
         mock_close.assert_called_once()
+
+    def test_write_failure_allows_retry_in_same_session(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Failed writes must not mark a reference as downloaded."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=2)
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+
+        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader,
+            "download_pr",
+            return_value=("# Test PR", set()),
+        )
+        mock_write = mocker.patch(
+            "pr2md.reference_downloader.write_text_atomic",
+            side_effect=[OSError("disk full"), None],
+        )
+
+        first_attempt = downloader.download_reference(ref, current_depth=1)
+        assert not first_attempt
+        assert ref not in downloader.downloaded
+
+        second_attempt = downloader.download_reference(ref, current_depth=1)
+        assert second_attempt == ["PR-1.md"]
+        assert ref in downloader.downloaded
+        assert mock_write.call_count == 2

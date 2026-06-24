@@ -12,6 +12,8 @@ from hypothesis import strategies as st
 from pytest_mock import MockerFixture
 
 from pr2md.cli import (
+    _resolve_primary_ref_type,
+    _run_primary_extraction,
     append_reference_summary,
     create_parser,
     download_references_if_needed,
@@ -562,6 +564,37 @@ class TestDownloadReferencesIfNeeded:
 
         instance.extract_references_from_pr.assert_called_once()
 
+    def test_filters_self_reference(self, mocker: MockerFixture) -> None:
+        """Test primary self-references are excluded from downloads."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+        instance = mock_downloader.return_value.__enter__.return_value
+        self_ref = GitHubReference(
+            ref_type="pr", owner="owner", repo="repo", number=123
+        )
+        other_ref = GitHubReference(
+            ref_type="issue", owner="owner", repo="repo", number=456
+        )
+        instance.extract_references_from_pr.return_value = {self_ref, other_ref}
+        mock_pr = MagicMock()
+
+        download_references_if_needed(
+            "owner",
+            "repo",
+            "pr",
+            123,
+            "PR-123.md",
+            2,
+            False,
+            False,
+            mock_pr,
+            None,
+            [],
+            [],
+            [],
+        )
+
+        instance.download_all_references.assert_called_once_with({other_ref})
+
     def test_skips_when_no_references_flag(self, mocker: MockerFixture) -> None:
         """Test reference download is skipped with --no-references."""
         mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
@@ -761,6 +794,23 @@ class TestExtractPRData:
         assert reviews == []
         assert review_comments == []
 
+    def test_extract_issue_data_unexpected_error_verbose(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test issue data extraction with unexpected error in verbose mode."""
+        mock_extractor = MagicMock()
+        mock_extractor.extract_all.side_effect = ValueError("Unexpected error")
+        _mock_extractor_context(mock_extractor)
+        mocker.patch("pr2md.cli.GitHubIssueExtractor", return_value=mock_extractor)
+
+        markdown, success, issue, comments = extract_issue_data(
+            "owner", "repo", 456, True
+        )
+        assert success is False
+        assert markdown == ""
+        assert issue is None
+        assert comments == []
+
     def test_extract_pr_data_format_error(self, mocker: MockerFixture) -> None:
         """Test PR data extraction with formatting error."""
         mock_pr = MagicMock()
@@ -891,6 +941,46 @@ class TestExtractIssueData:
         assert comments == []
 
 
+class TestResolvePrimaryRefType:
+    """Tests for primary resource type resolution."""
+
+    def test_returns_same_type_when_matching(self, mocker: MockerFixture) -> None:
+        """Test no change when CLI type matches API type."""
+        mock_client = mocker.patch("pr2md.cli.GitHubClient")
+        mock_client.return_value.__enter__.return_value.fetch_issue_or_pr_type.return_value = (
+            "pr"
+        )
+
+        assert _resolve_primary_ref_type("pr", "owner", "repo", 1) == "pr"
+
+    def test_auto_corrects_issue_to_pr(self, mocker: MockerFixture) -> None:
+        """Test auto-correction when issue arg targets a PR."""
+        mock_client = mocker.patch("pr2md.cli.GitHubClient")
+        mock_client.return_value.__enter__.return_value.fetch_issue_or_pr_type.return_value = (
+            "pr"
+        )
+
+        assert _resolve_primary_ref_type("issue", "owner", "repo", 1) == "pr"
+
+    def test_run_primary_extraction_uses_resolved_type(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test extraction path uses auto-corrected type."""
+        mocker.patch(
+            "pr2md.cli._resolve_primary_ref_type",
+            return_value="pr",
+        )
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, MagicMock(), [], [], []),
+        )
+        mock_issue_extract = mocker.patch("pr2md.cli.extract_issue_data")
+
+        _run_primary_extraction("issue", "owner", "repo", 1, False)
+
+        mock_issue_extract.assert_not_called()
+
+
 class TestWriteOutput:
     """Tests for write_output function."""
 
@@ -931,6 +1021,14 @@ class TestWriteOutput:
 
 class TestMain:
     """Tests for main function."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_resolve_primary_type(self, mocker: MockerFixture) -> None:
+        """Avoid live API calls for type resolution in main tests."""
+        mocker.patch(
+            "pr2md.cli._resolve_primary_ref_type",
+            side_effect=lambda ref_type, *_args, **_kwargs: ref_type,
+        )
 
     def test_main_pr_success(self, mocker: MockerFixture) -> None:
         """Test successful main execution for PR."""
@@ -1026,6 +1124,35 @@ class TestMain:
             main()
         assert exc_info.value.code == 2
 
+    def test_main_append_summary_failure(self, mocker: MockerFixture) -> None:
+        """Test main exits with code 1 when summary append fails."""
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123"],
+        )
+        mock_pr = MagicMock()
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, mock_pr, [], [], []),
+        )
+        mocker.patch("pr2md.cli.write_output", return_value=True)
+        skipped = [
+            (
+                GitHubReference(ref_type="issue", owner="owner", repo="repo", number=2),
+                "not found",
+            )
+        ]
+        mocker.patch(
+            "pr2md.cli.download_references_if_needed",
+            return_value=(False, skipped),
+        )
+        mocker.patch("pr2md.cli.append_reference_summary", return_value=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
     def test_module_entry_point_help(self) -> None:
         """Test python -m pr2md --help runs successfully."""
         result = subprocess.run(
@@ -1037,6 +1164,14 @@ class TestMain:
         )
         assert result.returncode == 0
         assert "Extract GitHub Pull Request or Issue" in result.stdout
+
+    def test_main_module_invokes_cli_main(self, mocker: MockerFixture) -> None:
+        """Test pr2md.__main__ delegates to cli.main."""
+        mock_main = mocker.patch("pr2md.cli.main")
+        from pr2md.__main__ import main as entry_main
+
+        entry_main()
+        mock_main.assert_called_once()
 
 
 class TestCLIHypothesis:

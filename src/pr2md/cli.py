@@ -13,6 +13,7 @@ import requests
 from pr2md.exceptions import GitHubAPIError
 from pr2md.file_io import write_text_atomic
 from pr2md.formatter import MarkdownFormatter
+from pr2md.github_client import GitHubClient
 from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
@@ -472,6 +473,19 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
             logger.info("No references found in %s", type_str)
             return True, []
 
+        primary_key = (owner, repo, number)
+        references = {
+            ref
+            for ref in references
+            if (ref.owner, ref.repo, ref.number) != primary_key
+        }
+        if not references:
+            logger.info(
+                "No external references found in %s (self-references excluded)",
+                type_str,
+            )
+            return True, []
+
         logger.info("Found %d references to download", len(references))
         downloaded_files = downloader.download_all_references(references)
 
@@ -490,6 +504,39 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
         return not downloader.had_download_failures, downloader.skipped_references
 
 
+def _resolve_primary_ref_type(
+    ref_type: str,
+    owner: str,
+    repo: str,
+    number: int,
+) -> str:
+    """Detect actual resource type and auto-correct mismatched CLI arguments."""
+    logger = logging.getLogger(__name__)
+    with GitHubClient() as client:
+        actual_type = client.fetch_issue_or_pr_type(owner, repo, number)
+
+    if actual_type is None or actual_type == ref_type:
+        return ref_type
+
+    if actual_type == "pr":
+        logger.warning(
+            "Resource #%d in %s/%s is a pull request, not an issue. "
+            "Using PR extraction for full diff and reviews.",
+            number,
+            owner,
+            repo,
+        )
+    else:
+        logger.warning(
+            "Resource #%d in %s/%s is an issue, not a pull request. "
+            "Using issue extraction.",
+            number,
+            owner,
+            repo,
+        )
+    return actual_type
+
+
 def _run_primary_extraction(
     ref_type: str,
     owner: str,
@@ -506,7 +553,8 @@ def _run_primary_extraction(
     list[ReviewComment],
 ]:
     """Extract and format the target PR or issue."""
-    if ref_type == "pr":
+    resolved_type = _resolve_primary_ref_type(ref_type, owner, repo, number)
+    if resolved_type == "pr":
         markdown, success, pull_request, comments, reviews, review_comments = (
             extract_pr_data(owner, repo, number, verbose)
         )

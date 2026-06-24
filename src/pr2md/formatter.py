@@ -4,7 +4,8 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
+from pr2md.markdown_utils import fenced_code_block
+from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment, User
 from pr2md.reference_parser import GitHubReference
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,13 @@ _REVIEW_STATE_EMOJI: dict[str, str] = {
     "DISMISSED": "🚫",
     "PENDING": "⏳",
 }
+
+
+def _format_user_link(user: User) -> str:
+    """Format a GitHub user as a markdown link or plain text."""
+    if user.html_url:
+        return f"[{user.login}]({user.html_url})"
+    return user.login
 
 
 class MarkdownFormatter:
@@ -88,7 +96,7 @@ class MarkdownFormatter:
 
 **PR Number:** #{pull_request.number}
 **Status:** {status}
-**Author:** [{pull_request.user.login}]({pull_request.user.html_url})
+**Author:** {_format_user_link(pull_request.user)}
 **Created:** {created_time}
 **Updated:** {updated_time}{closed_str}{merged_str}
 **URL:** {pull_request.html_url}
@@ -117,11 +125,7 @@ class MarkdownFormatter:
         if not diff:
             return "## Code Diff\n\n*No diff available.*"
 
-        return f"""## Code Diff
-
-```diff
-{diff}
-```"""
+        return "## Code Diff\n\n" + fenced_code_block(diff, "diff")
 
     @staticmethod
     def _format_conversation(comments: list[Comment]) -> str:
@@ -136,7 +140,7 @@ class MarkdownFormatter:
         for comment in sorted_comments:
             comment_time = comment.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
             # pylint: disable=line-too-long
-            formatted_comment = f"""### [{comment.user.login}]({comment.user.html_url}) commented on {comment_time}
+            formatted_comment = f"""### {_format_user_link(comment.user)} commented on {comment_time}
 
 {comment.body}
 
@@ -184,7 +188,7 @@ class MarkdownFormatter:
             )
 
         # pylint: disable=line-too-long
-        return f"""### {emoji} [{review.user.login}]({review.user.html_url}) {review.state.replace("_", " ")} on {submitted_str}
+        return f"""### {emoji} {_format_user_link(review.user)} {review.state.replace("_", " ")} on {submitted_str}
 
 {body_str}{superseded_note}
 
@@ -255,12 +259,10 @@ class MarkdownFormatter:
 
                 comment_time = comment.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
                 # pylint: disable=line-too-long
-                formatted_comment = f"""#### [{comment.user.login}]({comment.user.html_url}) commented on {comment_time}{reply_str}
+                formatted_comment = f"""#### {_format_user_link(comment.user)} commented on {comment_time}{reply_str}
 
 **Code context:**
-```diff
-{comment.diff_hunk}
-```
+{fenced_code_block(comment.diff_hunk, "diff")}
 
 **Comment:**
 {comment.body or ""}
@@ -326,7 +328,7 @@ class MarkdownFormatter:
 
 **Issue Number:** #{issue.number}
 **Status:** {status}
-**Author:** [{issue.user.login}]({issue.user.html_url})
+**Author:** {_format_user_link(issue.user)}
 **Created:** {created_time}
 **Updated:** {updated_time}{closed_str}
 **URL:** {issue.html_url}{labels_str}"""

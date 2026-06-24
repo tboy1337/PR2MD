@@ -24,6 +24,21 @@ class User:
             html_url=str(data["html_url"]),
         )
 
+    @classmethod
+    def from_dict_optional(cls, data: dict[str, Any] | None) -> "User":
+        """Create User from API data, using DELETED_USER when user is null."""
+        if data is None:
+            return DELETED_USER
+        return cls.from_dict(data)
+
+
+DELETED_USER = User(
+    login="[deleted user]",
+    id=0,
+    avatar_url="",
+    html_url="",
+)
+
 
 @dataclass
 class Label:
@@ -63,7 +78,9 @@ class Comment:
         """Create Comment from API response dictionary."""
         return cls(
             id=int(data["id"]),
-            user=User.from_dict(dict(data["user"])),
+            user=User.from_dict_optional(
+                dict(data["user"]) if data.get("user") is not None else None
+            ),
             body=str(data["body"]) if data.get("body") is not None else "",
             created_at=datetime.fromisoformat(
                 str(data["created_at"]).replace("Z", "+00:00")
@@ -103,13 +120,17 @@ class ReviewComment:
         """Create ReviewComment from API response dictionary."""
         return cls(
             id=int(data["id"]),
-            user=User.from_dict(dict(data["user"])),
+            user=User.from_dict_optional(
+                dict(data["user"]) if data.get("user") is not None else None
+            ),
             body=str(data["body"]) if data.get("body") is not None else None,
             path=str(data["path"]),
-            position=int(data["position"]) if data.get("position") else None,
+            position=(
+                int(data["position"]) if data.get("position") is not None else None
+            ),
             original_position=(
                 int(data["original_position"])
-                if data.get("original_position")
+                if data.get("original_position") is not None
                 else None
             ),
             commit_id=str(data["commit_id"]),
@@ -123,13 +144,19 @@ class ReviewComment:
             ),
             html_url=str(data["html_url"]),
             in_reply_to_id=(
-                int(data["in_reply_to_id"]) if data.get("in_reply_to_id") else None
+                int(data["in_reply_to_id"])
+                if data.get("in_reply_to_id") is not None
+                else None
             ),
             subject_type=(
-                str(data["subject_type"]) if data.get("subject_type") else None
+                str(data["subject_type"])
+                if data.get("subject_type") is not None
+                else None
             ),
-            start_line=int(data["start_line"]) if data.get("start_line") else None,
-            line=int(data["line"]) if data.get("line") else None,
+            start_line=(
+                int(data["start_line"]) if data.get("start_line") is not None else None
+            ),
+            line=int(data["line"]) if data.get("line") is not None else None,
             start_side=str(data["start_side"]) if data.get("start_side") else None,
             side=str(data["side"]) if data.get("side") else None,
         )
@@ -158,7 +185,9 @@ class Review:
 
         return cls(
             id=int(data["id"]),
-            user=User.from_dict(dict(data["user"])),
+            user=User.from_dict_optional(
+                dict(data["user"]) if data.get("user") is not None else None
+            ),
             body=str(data["body"]) if data.get("body") is not None else None,
             state=str(data["state"]),
             html_url=str(data["html_url"]),
@@ -196,7 +225,9 @@ class Issue:
             title=str(data["title"]),
             body=str(data["body"]) if data.get("body") is not None else None,
             state=str(data["state"]),
-            user=User.from_dict(dict(data["user"])),
+            user=User.from_dict_optional(
+                dict(data["user"]) if data.get("user") is not None else None
+            ),
             created_at=datetime.fromisoformat(
                 str(data["created_at"]).replace("Z", "+00:00")
             ),
@@ -253,7 +284,9 @@ class PullRequest:
             title=str(data["title"]),
             body=str(data["body"]) if data.get("body") is not None else None,
             state=str(data["state"]),
-            user=User.from_dict(dict(data["user"])),
+            user=User.from_dict_optional(
+                dict(data["user"]) if data.get("user") is not None else None
+            ),
             created_at=datetime.fromisoformat(
                 str(data["created_at"]).replace("Z", "+00:00")
             ),

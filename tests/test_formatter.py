@@ -150,6 +150,27 @@ class TestMarkdownFormatter:
         formatted = MarkdownFormatter._format_diff("")
         assert "*No diff available.*" in formatted
 
+    def test_format_diff_with_embedded_backticks(self) -> None:
+        """Test diff formatting when content contains markdown fences."""
+        diff = "line before\n```python\nprint('hi')\n```\nline after"
+        formatted = MarkdownFormatter._format_diff(diff)
+        assert "````diff" in formatted
+        assert diff in formatted
+        assert formatted.count("````") >= 2
+
+    def test_format_pr_deleted_author(self, sample_pr: PullRequest) -> None:
+        """Test PR header renders deleted users without broken links."""
+        deleted_user = User(
+            login="[deleted user]",
+            id=0,
+            avatar_url="",
+            html_url="",
+        )
+        sample_pr.user = deleted_user
+        header = MarkdownFormatter._format_header(sample_pr)
+        assert "**Author:** [deleted user]" in header
+        assert "](https://" not in header.split("**Author:**")[1].split("\n")[0]
+
     def test_format_conversation(self, sample_comment: Comment) -> None:
         """Test conversation formatting."""
         conversation = MarkdownFormatter._format_conversation([sample_comment])

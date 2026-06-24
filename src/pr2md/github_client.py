@@ -5,6 +5,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from types import TracebackType
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
@@ -12,6 +13,11 @@ from urllib.parse import urlparse
 import requests
 
 from pr2md.exceptions import GitHubAPIError
+
+try:
+    _PACKAGE_VERSION = version("PR2MD")
+except PackageNotFoundError:
+    _PACKAGE_VERSION = "unknown"
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +110,7 @@ class GitHubClient:
         self.session.headers.update(
             {
                 "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "GitHub-PR-Extractor",
+                "User-Agent": f"PR2MD/{_PACKAGE_VERSION}",
             }
         )
 

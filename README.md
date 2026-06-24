@@ -259,8 +259,8 @@ pip install -r requirements-dev.txt
 
 Run the local verification script (formatting, type checks, lint, security scan, tests):
 
-```powershell
-.\scripts\verify.ps1
+```bash
+py scripts/verify.py
 ```
 
 Unit tests run by default; integration tests (live GitHub API) are excluded:

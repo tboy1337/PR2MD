@@ -356,3 +356,48 @@ class TestGitHubClient:
         mocker.patch.object(client, "get", return_value="not a dict")
         assert client.fetch_issue_or_pr_type("o", "r", 1) is None
         client.close()
+
+    def test_get_504_retries_until_success(self, mocker: MockerFixture) -> None:
+        """Test 504 gateway timeout is retried."""
+        client = GitHubClient()
+        gateway_timeout = mocker.Mock()
+        gateway_timeout.status_code = 504
+        gateway_timeout.text = "Gateway Timeout"
+        gateway_timeout.headers = {}
+        ok_response = mocker.Mock()
+        ok_response.status_code = 200
+        ok_response.json.return_value = {"ok": True}
+        ok_response.headers = {}
+        mocker.patch.object(
+            client.session,
+            "get",
+            side_effect=[gateway_timeout, ok_response],
+        )
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        assert client.get("/repos/o/r") == {"ok": True}
+        client.close()
+
+    def test_rate_limit_invalid_retry_after_uses_reset_header(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test invalid Retry-After falls back to X-RateLimit-Reset."""
+        from pr2md.github_client import _rate_limit_wait_seconds
+
+        response = mocker.Mock()
+        response.headers = {
+            "Retry-After": "not-a-number",
+            "X-RateLimit-Reset": "4102444800",
+        }
+        wait = _rate_limit_wait_seconds(response)
+        assert wait >= 1.0
+
+    def test_rate_limit_default_wait_when_headers_missing(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test default wait when rate-limit headers are absent."""
+        from pr2md.github_client import _rate_limit_wait_seconds
+
+        response = mocker.Mock()
+        response.headers = {}
+        assert _rate_limit_wait_seconds(response) == 60.0

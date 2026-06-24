@@ -38,6 +38,12 @@ class TestValidation:
         with pytest.raises(ValueError, match="Invalid repository"):
             validate_repo("repo/name")
 
+    def test_validate_repo_max_length(self) -> None:
+        """Test repository name at maximum allowed length."""
+        validate_repo("a" * 100)
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            validate_repo("a" * 101)
+
     def test_validate_issue_number_valid(self) -> None:
         """Test valid issue numbers."""
         validate_issue_number(1)

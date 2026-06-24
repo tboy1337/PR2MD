@@ -206,10 +206,7 @@ class TestReferenceParser:
         # This is tricky - we want to avoid matching things like color codes
         # but still match actual references. Current implementation may match
         # some edge cases.
-        text = "array[#123] = value"  # This might be matched as a reference
+        text = "array[#123] = value"
         refs = parser.parse_references(text)
 
-        # The current implementation will match this. This is acceptable
-        # as it's better to over-match than under-match.
-        # In a production system, we could add more sophisticated filtering.
-        assert isinstance(refs, set)
+        assert refs == set()
