@@ -10,6 +10,8 @@ from pr2md.reference_parser import GitHubReference
 
 logger = logging.getLogger(__name__)
 
+DIFF_UNAVAILABLE_PREFIX = "__DIFF_UNAVAILABLE__:"
+
 _REVIEW_STATE_EMOJI: dict[str, str] = {
     "APPROVED": "✅",
     "CHANGES_REQUESTED": "🔴",
@@ -24,6 +26,22 @@ def _format_user_link(user: User) -> str:
     if user.html_url:
         return f"[{user.login}]({user.html_url})"
     return user.login
+
+
+def _format_utc(moment: datetime) -> str:
+    """Format a timezone-aware datetime as a UTC timestamp string."""
+    if moment.tzinfo is None:
+        utc_dt = moment.replace(tzinfo=timezone.utc)
+    else:
+        utc_dt = moment.astimezone(timezone.utc)
+    return utc_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _escape_markdown_title(title: str) -> str:
+    """Prevent user titles starting with '#' from breaking heading structure."""
+    if title.startswith("#"):
+        return "\\" + title
+    return title
 
 
 class MarkdownFormatter:
@@ -81,18 +99,18 @@ class MarkdownFormatter:
 
         closed_str = ""
         if pull_request.closed_at:
-            closed_time = pull_request.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            closed_time = _format_utc(pull_request.closed_at)
             closed_str = f"\n**Closed:** {closed_time}"
 
         merged_str = ""
         if pull_request.merged_at:
-            merged_time = pull_request.merged_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            merged_time = _format_utc(pull_request.merged_at)
             merged_str = f"\n**Merged:** {merged_time}"
 
-        created_time = pull_request.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        updated_time = pull_request.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        created_time = _format_utc(pull_request.created_at)
+        updated_time = _format_utc(pull_request.updated_at)
 
-        return f"""# {pull_request.title}
+        return f"""# {_escape_markdown_title(pull_request.title)}
 
 **PR Number:** #{pull_request.number}
 **Status:** {status}
@@ -122,6 +140,9 @@ class MarkdownFormatter:
     @staticmethod
     def _format_diff(diff: str) -> str:
         """Format diff section."""
+        if diff.startswith(DIFF_UNAVAILABLE_PREFIX):
+            reason = diff[len(DIFF_UNAVAILABLE_PREFIX) :]
+            return f"## Code Diff\n\n*Diff unavailable: {reason}*"
         if not diff:
             return "## Code Diff\n\n*No diff available.*"
 
@@ -138,7 +159,7 @@ class MarkdownFormatter:
 
         formatted_comments = []
         for comment in sorted_comments:
-            comment_time = comment.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            comment_time = _format_utc(comment.created_at)
             # pylint: disable=line-too-long
             formatted_comment = f"""### {_format_user_link(comment.user)} commented on {comment_time}
 
@@ -169,9 +190,7 @@ class MarkdownFormatter:
     ) -> str:
         """Format one review entry."""
         submitted_str = (
-            review.submitted_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-            if review.submitted_at
-            else "Unknown date"
+            _format_utc(review.submitted_at) if review.submitted_at else "Unknown date"
         )
         emoji = _REVIEW_STATE_EMOJI.get(review.state, "")
         body_str = review.body if review.body else "*No comment provided.*"
@@ -257,7 +276,7 @@ class MarkdownFormatter:
                 if comment.in_reply_to_id:
                     reply_str = f" *(in reply to comment #{comment.in_reply_to_id})*"
 
-                comment_time = comment.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                comment_time = _format_utc(comment.created_at)
                 # pylint: disable=line-too-long
                 formatted_comment = f"""#### {_format_user_link(comment.user)} commented on {comment_time}{reply_str}
 
@@ -315,16 +334,16 @@ class MarkdownFormatter:
 
         closed_str = ""
         if issue.closed_at:
-            closed_time = issue.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            closed_time = _format_utc(issue.closed_at)
             closed_str = f"\n**Closed:** {closed_time}"
             # Update status to CLOSED if it has a closed_at date
             if status == "OPEN":
                 status = "CLOSED"
 
-        created_time = issue.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        updated_time = issue.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        created_time = _format_utc(issue.created_at)
+        updated_time = _format_utc(issue.updated_at)
 
-        return f"""# {issue.title}
+        return f"""# {_escape_markdown_title(issue.title)}
 
 **Issue Number:** #{issue.number}
 **Status:** {status}

@@ -240,3 +240,15 @@ class TestReferenceParser:
         assert ref.ref_type == "issue"
         assert ref.from_url is True
         assert ref.number == 42
+
+    def test_dedupe_keeps_url_when_shorthand_arrives_first(
+        self, parser: ReferenceParser
+    ) -> None:
+        """Test URL-derived reference replaces earlier shorthand for same key."""
+        text = "https://github.com/testowner/testrepo/issues/42 then #42"
+        refs = parser.parse_references(text)
+
+        assert len(refs) == 1
+        ref = next(iter(refs))
+        assert ref.ref_type == "issue"
+        assert ref.from_url is True

@@ -153,6 +153,22 @@ class TestCreateParser:
         assert parser is not None
         assert parser.prog is not None
 
+    def test_parser_version_argument(self) -> None:
+        """Test parser --version is registered with package version."""
+        from pr2md._version import get_version
+
+        parser = create_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["--version"])
+        assert exc_info.value.code == 0
+
+        version_action = next(
+            action
+            for action in parser._actions  # pylint: disable=protected-access
+            if action.dest == "version"
+        )
+        assert get_version() in getattr(version_action, "version", "")
+
     def test_parser_accepts_url(self) -> None:
         """Test parser accepts URL."""
         parser = create_parser()
@@ -560,6 +576,7 @@ class TestDownloadReferencesIfNeeded:
             "PR-123.md",
             2,
             False,
+            True,
             False,
             mock_pr,
             None,
@@ -591,6 +608,7 @@ class TestDownloadReferencesIfNeeded:
             "PR-123.md",
             2,
             False,
+            True,
             False,
             mock_pr,
             None,
@@ -622,6 +640,7 @@ class TestDownloadReferencesIfNeeded:
                 "PR-123.md",
                 2,
                 False,
+                True,
                 False,
                 mock_pr,
                 None,
@@ -648,6 +667,7 @@ class TestDownloadReferencesIfNeeded:
             "Issue-456.md",
             2,
             False,
+            True,
             False,
             None,
             None,
@@ -673,6 +693,7 @@ class TestDownloadReferencesIfNeeded:
             123,
             "PR-123.md",
             2,
+            True,
             True,
             False,
             mock_pr,
@@ -705,6 +726,7 @@ class TestDownloadReferencesIfNeeded:
             "PR-123.md",
             2,
             False,
+            True,
             False,
             mock_pr,
             None,
@@ -734,6 +756,7 @@ class TestDownloadReferencesIfNeeded:
             "Issue-456.md",
             2,
             False,
+            True,
             False,
             None,
             mock_issue,
@@ -758,6 +781,7 @@ class TestDownloadReferencesIfNeeded:
             2,
             False,
             False,
+            False,
             mock_pr,
             None,
             [],
@@ -769,6 +793,34 @@ class TestDownloadReferencesIfNeeded:
         assert success is True
         assert not skipped
         assert not depth_skipped
+
+    def test_auto_output_enables_download_with_any_path(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test auto_output=True triggers downloads regardless of output path."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+        instance = mock_downloader.return_value.__enter__.return_value
+        instance.extract_references_from_pr.return_value = set()
+        mock_pr = MagicMock()
+
+        download_references_if_needed(
+            "owner",
+            "repo",
+            "pr",
+            123,
+            "subdir/custom-name.md",
+            2,
+            False,
+            True,
+            False,
+            mock_pr,
+            None,
+            [],
+            [],
+            [],
+        )
+
+        instance.extract_references_from_pr.assert_called_once()
 
     def test_append_reference_summary(self, work_dir: Path) -> None:
         """Test appending reference summary to an existing file."""

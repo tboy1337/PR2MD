@@ -157,6 +157,7 @@ class TestValidation:
         assert sanitize_filename_component("CON") == "_CON"
         assert sanitize_filename_component("com1") == "_com1"
         assert sanitize_filename_component("owner") == "owner"
+        assert sanitize_filename_component("CON.txt") == "_CON.txt"
 
     def test_assert_safe_write_path_rejects_escape(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

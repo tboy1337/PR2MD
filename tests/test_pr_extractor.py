@@ -197,3 +197,47 @@ class TestGitHubPRExtractor:
         assert diff == large_diff
         assert any(record.levelname == "WARNING" for record in caplog.records)
         assert any("large" in record.message.lower() for record in caplog.records)
+
+    def test_fetch_diff_logs_very_large_diff_at_warning(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test very large diffs log a stronger warning but still return full content."""
+        extractor = GitHubPRExtractor("owner", "repo", 123)
+        large_diff = "x" * (26 * 1024 * 1024)
+        mocker.patch.object(extractor._client, "get", return_value=large_diff)
+
+        with caplog.at_level(logging.INFO, logger="pr2md.pr_extractor"):
+            diff = extractor.fetch_diff()
+
+        assert diff == large_diff
+        assert any("large" in record.message.lower() for record in caplog.records)
+
+    def test_extract_all_continues_when_diff_fails(
+        self, mocker: MockerFixture, sample_pr_dict: dict[str, object]
+    ) -> None:
+        """Test extract_all returns PR data when diff fetch fails."""
+        from pr2md.formatter import DIFF_UNAVAILABLE_PREFIX
+        from pr2md.models import PullRequest
+
+        extractor = GitHubPRExtractor("owner", "repo", 123)
+        pull_request = PullRequest.from_dict(sample_pr_dict)
+        mock_comments = [mocker.Mock()]
+
+        mocker.patch.object(extractor, "fetch_pr_details", return_value=pull_request)
+        mocker.patch.object(extractor, "fetch_comments", return_value=mock_comments)
+        mocker.patch.object(extractor, "fetch_reviews", return_value=[])
+        mocker.patch.object(extractor, "fetch_review_comments", return_value=[])
+        mocker.patch.object(
+            extractor,
+            "fetch_diff",
+            side_effect=GitHubAPIError("Request timed out"),
+        )
+
+        pr, comments, reviews, review_comments, diff = extractor.extract_all()
+
+        assert pr == pull_request
+        assert comments == mock_comments
+        assert not reviews
+        assert not review_comments
+        assert diff.startswith(DIFF_UNAVAILABLE_PREFIX)
+        assert "Request timed out" in diff

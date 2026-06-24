@@ -330,6 +330,8 @@ class ReferenceDownloader:
             OSError,
             json.JSONDecodeError,
             ValueError,
+            TypeError,
+            KeyError,
         ) as err:
             reason = self._download_error_reason(err)
             self._log_download_error(
@@ -483,7 +485,7 @@ class ReferenceDownloader:
             )
             return []
 
-        if current_depth > self.max_depth:
+        if current_depth > max(self.max_depth, 1):
             logger.info(
                 "Skipping reference due to depth limit (%d): %s/%s %s #%d",
                 self.max_depth,

@@ -899,3 +899,35 @@ class TestIssueFormatting:
 
         assert "# Test Issue" in markdown
         assert "*No comments in the conversation thread.*" in markdown
+
+    def test_format_header_escapes_hash_in_title(self, sample_pr: PullRequest) -> None:
+        """Test PR titles starting with '#' do not break heading structure."""
+        sample_pr.title = "# Not a heading"
+        header = MarkdownFormatter._format_header(sample_pr)
+        assert header.startswith("# \\# Not a heading")
+
+    def test_format_issue_header_escapes_hash_in_title(
+        self, sample_issue: Issue
+    ) -> None:
+        """Test issue titles starting with '#' do not break heading structure."""
+        sample_issue.title = "# Not a heading"
+        header = MarkdownFormatter._format_issue_header(sample_issue)
+        assert header.startswith("# \\# Not a heading")
+
+    def test_format_utc_converts_non_utc_offset(self, sample_pr: PullRequest) -> None:
+        """Test timestamps are normalized to UTC in formatted output."""
+        from datetime import timedelta
+
+        offset = timezone(timedelta(hours=5))
+        sample_pr.created_at = datetime(2025, 1, 1, 5, 0, 0, tzinfo=offset)
+        header = MarkdownFormatter._format_header(sample_pr)
+        assert "**Created:** 2025-01-01 00:00:00 UTC" in header
+
+    def test_format_diff_unavailable_placeholder(self) -> None:
+        """Test unavailable diff prefix renders a user-facing message."""
+        from pr2md.formatter import DIFF_UNAVAILABLE_PREFIX
+
+        section = MarkdownFormatter._format_diff(
+            f"{DIFF_UNAVAILABLE_PREFIX}Request timed out"
+        )
+        assert "*Diff unavailable: Request timed out*" in section

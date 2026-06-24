@@ -3,6 +3,7 @@
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -748,6 +749,20 @@ class TestDownloadErrorReason:
             mock_close = mocker.patch.object(downloader._client, "close")
         mock_close.assert_called_once()
 
+    def test_shared_client_not_closed_on_exit(self, mocker: MockerFixture) -> None:
+        """Test injected client is not closed when downloader exits."""
+        from pr2md.github_client import GitHubClient
+
+        shared_client = GitHubClient()
+        downloader = ReferenceDownloader("owner", "repo", client=shared_client)
+        mock_close = mocker.patch.object(shared_client, "close")
+
+        with downloader:
+            pass
+
+        mock_close.assert_not_called()
+        shared_client.close()
+
     def test_write_failure_allows_retry_in_same_session(
         self, mocker: MockerFixture
     ) -> None:
@@ -817,17 +832,91 @@ class TestReferenceDownloadEfficiency:
         assert refs is None
 
     def test_download_all_references_max_depth_zero(
-        self, mocker: MockerFixture
+        self, mocker: MockerFixture, work_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test depth 0 still downloads top-level references without recursion."""
+        """Test depth 0 downloads top-level references without recursion."""
+        monkeypatch.chdir(work_dir)
         downloader = ReferenceDownloader("owner", "repo", max_depth=0)
-        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+        top_ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+        nested_ref = GitHubReference(
+            ref_type="issue", owner="owner", repo="repo", number=2
+        )
 
         mocker.patch.object(
             downloader,
-            "download_reference",
-            return_value=["PR-1.md"],
+            "determine_ref_type_and_payload",
+            side_effect=lambda _o, _r, number: (
+                ("pr", None) if number == 1 else ("issue", {"number": number})
+            ),
+        )
+        mocker.patch.object(
+            downloader,
+            "_download_and_format",
+            side_effect=lambda ref_type, _o, _r, number, **kwargs: (
+                ("# PR", {nested_ref}, False, "")
+                if number == 1
+                else ("# Issue", set(), False, "")
+            ),
         )
 
-        files = downloader.download_all_references({ref})
+        files = downloader.download_all_references({top_ref})
         assert files == ["PR-1.md"]
+        assert not any(name == "Issue-2.md" for name in files)
+        assert len(downloader.skipped_depth_references) == 0
+
+    @pytest.mark.parametrize(
+        ("max_depth", "start_depth", "should_download", "should_recurse"),
+        [
+            (0, 1, True, False),
+            (1, 1, True, False),
+            (1, 2, False, False),
+            (2, 1, True, True),
+            (2, 2, True, False),
+            (2, 3, False, False),
+        ],
+    )
+    def test_download_reference_depth_boundaries(
+        self,
+        mocker: MockerFixture,
+        max_depth: int,
+        start_depth: int,
+        should_download: bool,
+        should_recurse: bool,
+    ) -> None:
+        """Test depth skip and recursion boundaries across max_depth values."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=max_depth)
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+        child_ref = GitHubReference(
+            ref_type="issue", owner="owner", repo="repo", number=2
+        )
+
+        mocker.patch.object(
+            downloader, "determine_ref_type_and_payload", return_value=("pr", None)
+        )
+        mock_download = mocker.patch.object(
+            downloader,
+            "_download_and_format",
+            return_value=("# PR", {child_ref}, False, ""),
+        )
+        mock_write = mocker.patch("pr2md.reference_downloader.write_text_atomic")
+        mock_recurse = mocker.patch.object(
+            downloader, "download_reference", wraps=downloader.download_reference
+        )
+
+        files = downloader.download_reference(ref, current_depth=start_depth)
+
+        if should_download:
+            assert "PR-1.md" in files
+            if should_recurse:
+                assert len(files) == 2
+            else:
+                assert files == ["PR-1.md"]
+            mock_write.assert_called()
+        else:
+            assert not files
+            mock_write.assert_not_called()
+
+        if should_recurse:
+            assert mock_recurse.call_count >= 2
+        elif should_download:
+            assert mock_recurse.call_count == 1

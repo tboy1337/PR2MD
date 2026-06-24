@@ -4,12 +4,36 @@ import logging
 from types import TracebackType
 from typing import Any, Optional
 
+from pr2md.exceptions import GitHubAPIError
+from pr2md.formatter import DIFF_UNAVAILABLE_PREFIX
 from pr2md.github_client import GitHubClient
 from pr2md.models import Comment, PullRequest, Review, ReviewComment
 
 logger = logging.getLogger(__name__)
 
 _DIFF_SIZE_WARNING_BYTES = 5 * 1024 * 1024
+_DIFF_SIZE_INFO_BYTES = 25 * 1024 * 1024
+_DIFF_SIZE_HIGH_WARNING_BYTES = 100 * 1024 * 1024
+
+
+def _log_diff_size(diff_size: int) -> None:
+    """Log tiered size notices for large diffs without refusing the download."""
+    size_mb = diff_size / (1024 * 1024)
+    if diff_size > _DIFF_SIZE_HIGH_WARNING_BYTES:
+        logger.warning(
+            "PR diff is very large (%.1f MB); full diff will be included in export",
+            size_mb,
+        )
+    elif diff_size > _DIFF_SIZE_INFO_BYTES:
+        logger.info(
+            "PR diff is large (%.1f MB); full diff will be included in export",
+            size_mb,
+        )
+    elif diff_size > _DIFF_SIZE_WARNING_BYTES:
+        logger.warning(
+            "PR diff is large (%.1f MB); full diff will be included in export",
+            size_mb,
+        )
 
 
 class GitHubPRExtractor:
@@ -134,12 +158,7 @@ class GitHubPRExtractor:
         endpoint = f"/repos/{self.owner}/{self.repo}/pulls/{self.pr_number}"
         diff: str = self._client.get(endpoint, accept="application/vnd.github.v3.diff")
         diff_size = len(diff.encode("utf-8"))
-        if diff_size > _DIFF_SIZE_WARNING_BYTES:
-            size_mb = diff_size / (1024 * 1024)
-            logger.warning(
-                "PR diff is large (%.1f MB); full diff will be included in export",
-                size_mb,
-            )
+        _log_diff_size(diff_size)
         logger.info("Fetched diff (%d bytes)", len(diff))
         return diff
 
@@ -153,13 +172,35 @@ class GitHubPRExtractor:
             Tuple of (PullRequest, comments, reviews, review_comments, diff)
 
         Raises:
-            GitHubAPIError: If any request fails
+            GitHubAPIError: If PR details cannot be fetched
         """
         logger.info("Extracting all PR data")
         pull_request = self.fetch_pr_details()
-        comments = self.fetch_comments()
-        reviews = self.fetch_reviews()
-        review_comments = self.fetch_review_comments()
-        diff = self.fetch_diff()
+
+        comments: list[Comment] = []
+        try:
+            comments = self.fetch_comments()
+        except GitHubAPIError as err:
+            logger.warning("Failed to fetch comments: %s", err)
+
+        reviews: list[Review] = []
+        try:
+            reviews = self.fetch_reviews()
+        except GitHubAPIError as err:
+            logger.warning("Failed to fetch reviews: %s", err)
+
+        review_comments: list[ReviewComment] = []
+        try:
+            review_comments = self.fetch_review_comments()
+        except GitHubAPIError as err:
+            logger.warning("Failed to fetch review comments: %s", err)
+
+        diff = ""
+        try:
+            diff = self.fetch_diff()
+        except GitHubAPIError as err:
+            logger.warning("Failed to fetch diff: %s", err)
+            diff = f"{DIFF_UNAVAILABLE_PREFIX}{err}"
+
         logger.info("Successfully extracted all PR data")
         return pull_request, comments, reviews, review_comments, diff

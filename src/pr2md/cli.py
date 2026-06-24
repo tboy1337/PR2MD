@@ -5,11 +5,11 @@ import json
 import logging
 import re
 import sys
-from pathlib import Path
 from typing import Callable, Literal, NamedTuple, Optional, cast
 
 import requests
 
+from pr2md._version import get_version
 from pr2md.exceptions import GitHubAPIError
 from pr2md.file_io import append_text_atomic, log_overwrite_if_exists, write_text_atomic
 from pr2md.formatter import MarkdownFormatter
@@ -179,6 +179,12 @@ Examples:
         "--strict",
         action="store_true",
         help="Exit with code 2 if any referenced PR/issue download fails",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {get_version()}",
     )
 
     return parser
@@ -481,9 +487,10 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     repo: str,
     ref_type: str,
     number: int,
-    output_path: Optional[str],
+    _output_path: Optional[str],
     depth: int,
     no_references: bool,
+    auto_output: bool,
     verbose: bool,
     pull_request: Optional[PullRequest],
     issue: Optional[Issue],
@@ -501,11 +508,8 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     """
     logger = logging.getLogger(__name__)
     type_str = "PR" if ref_type == "pr" else "Issue"
-    using_auto_naming = (
-        output_path is not None and Path(output_path).name == f"{type_str}-{number}.md"
-    )
 
-    if not using_auto_naming or no_references or not (pull_request or issue):
+    if not auto_output or no_references or not (pull_request or issue):
         return True, [], []
 
     logger.info("Scanning for referenced PRs and issues...")
@@ -737,6 +741,7 @@ def _execute_cli(cli_args: ParsedArguments) -> None:  # pylint: disable=too-many
                 output_path,
                 cli_args.depth,
                 cli_args.no_references,
+                cli_args.auto_output,
                 cli_args.verbose,
                 pull_request,
                 issue,
