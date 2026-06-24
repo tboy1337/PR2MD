@@ -379,6 +379,7 @@ def extract_issue_data(
     verbose: bool,
     *,
     client: Optional[GitHubClient] = None,
+    cached_issue_payload: Optional[dict[str, object]] = None,
 ) -> tuple[str, bool, Optional[Issue], list[Comment]]:
     """
     Extract Issue data and format as Markdown.
@@ -395,7 +396,12 @@ def extract_issue_data(
 
     def extract_fn() -> tuple[Issue, list[Comment]]:
         with GitHubIssueExtractor(
-            owner, repo, issue_number, client=client
+            owner,
+            repo,
+            issue_number,
+            client=client,
+            cached_issue_payload=cached_issue_payload,
+            warn_if_pull_request=False,
         ) as extractor:
             return extractor.extract_all()
 
@@ -560,10 +566,13 @@ def _resolve_primary_ref_type(
     repo: str,
     number: int,
     client: GitHubClient,
-) -> str:
+) -> tuple[str, Optional[dict[str, object]]]:
     """Detect actual resource type and auto-correct mismatched CLI arguments."""
     logger = logging.getLogger(__name__)
-    actual_type = client.fetch_issue_or_pr_type(owner, repo, number)
+    actual_type, issue_payload = client.fetch_issue_or_pr_metadata(owner, repo, number)
+    cached_issue_payload: Optional[dict[str, object]] = (
+        issue_payload if actual_type == "issue" else None
+    )
 
     if actual_type is None or actual_type == ref_type:
         if actual_type is None:
@@ -575,7 +584,7 @@ def _resolve_primary_ref_type(
                 repo,
                 ref_type,
             )
-        return ref_type
+        return ref_type, cached_issue_payload if actual_type == "issue" else None
 
     if actual_type == "pr":
         logger.warning(
@@ -585,18 +594,19 @@ def _resolve_primary_ref_type(
             owner,
             repo,
         )
-    else:
-        logger.warning(
-            "Resource #%d in %s/%s is an issue, not a pull request. "
-            "Using issue extraction.",
-            number,
-            owner,
-            repo,
-        )
-    return actual_type
+        return "pr", None
+
+    logger.warning(
+        "Resource #%d in %s/%s is an issue, not a pull request. "
+        "Using issue extraction.",
+        number,
+        owner,
+        repo,
+    )
+    return "issue", cached_issue_payload
 
 
-def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,too-many-locals
+def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,too-many-locals,too-many-arguments
     ref_type: str,
     owner: str,
     repo: str,
@@ -605,6 +615,7 @@ def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,to
     client: GitHubClient,
     *,
     resolved_type: Optional[str] = None,
+    cached_issue_payload: Optional[dict[str, object]] = None,
 ) -> tuple[
     str,
     bool,
@@ -623,7 +634,7 @@ def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,to
     logger = logging.getLogger(__name__)
     if resolved_type is None:
         try:
-            resolved_type = _resolve_primary_ref_type(
+            resolved_type, cached_issue_payload = _resolve_primary_ref_type(
                 ref_type, owner, repo, number, client
             )
         except GitHubAPIError as err:
@@ -646,7 +657,12 @@ def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,to
         )
 
     markdown, success, issue, comments = extract_issue_data(
-        owner, repo, number, verbose, client=client
+        owner,
+        repo,
+        number,
+        verbose,
+        client=client,
+        cached_issue_payload=cached_issue_payload,
     )
     return markdown, success, None, issue, comments, [], [], resolved_type
 
@@ -657,7 +673,7 @@ def _execute_cli(cli_args: ParsedArguments) -> None:  # pylint: disable=too-many
 
     with GitHubClient() as client:
         try:
-            resolved_type = _resolve_primary_ref_type(
+            resolved_type, cached_issue_payload = _resolve_primary_ref_type(
                 cli_args.ref_type,
                 cli_args.owner,
                 cli_args.repo,
@@ -702,6 +718,7 @@ def _execute_cli(cli_args: ParsedArguments) -> None:  # pylint: disable=too-many
             cli_args.verbose,
             client,
             resolved_type=resolved_type,
+            cached_issue_payload=cached_issue_payload,
         )
 
         if not success:

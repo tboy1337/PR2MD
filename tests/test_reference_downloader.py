@@ -304,8 +304,8 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
         mocker.patch.object(
             downloader._client,
-            "fetch_issue_or_pr_type",
-            return_value="pr",
+            "fetch_issue_or_pr_metadata",
+            return_value=("pr", None),
         )
 
         ref_type = downloader.determine_ref_type("owner", "repo", 1)
@@ -314,10 +314,11 @@ class TestReferenceDownloader:
     def test_determine_ref_type_issue(self, mocker: MockerFixture) -> None:
         """Test determining reference type for issue."""
         downloader = ReferenceDownloader("owner", "repo")
+        issue_payload = {"number": 1}
         mocker.patch.object(
             downloader._client,
-            "fetch_issue_or_pr_type",
-            return_value="issue",
+            "fetch_issue_or_pr_metadata",
+            return_value=("issue", issue_payload),
         )
 
         ref_type = downloader.determine_ref_type("owner", "repo", 1)
@@ -328,8 +329,8 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
         mocker.patch.object(
             downloader._client,
-            "fetch_issue_or_pr_type",
-            return_value=None,
+            "fetch_issue_or_pr_metadata",
+            return_value=(None, None),
         )
 
         ref_type = downloader.determine_ref_type("owner", "repo", 1)
@@ -353,7 +354,9 @@ class TestReferenceDownloader:
             ref_type="issue", owner="owner", repo="repo", number=1
         )
 
-        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader, "determine_ref_type_and_payload", return_value=("pr", None)
+        )
         mocker.patch.object(
             downloader,
             "_download_and_format",
@@ -417,48 +420,77 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo", max_depth=1)
         downloader.log_skipped_summary()
 
-    def test_download_reference_url_type_fallback(self, mocker: MockerFixture) -> None:
-        """Test fallback to alternate type when URL path mismatches resource."""
+    def test_download_reference_skips_alternate_when_type_confirmed(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test confirmed types do not retry the alternate resource on 404."""
         downloader = ReferenceDownloader("owner", "repo", max_depth=1)
         ref = GitHubReference(
             ref_type="pr",
             owner="owner",
             repo="repo",
             number=1,
-            from_url=True,
         )
 
-        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader,
+            "determine_ref_type_and_payload",
+            return_value=("pr", None),
+        )
+        mock_format = mocker.patch.object(
+            downloader,
+            "_download_and_format",
+            return_value=("", None, True),
+        )
+
+        files = downloader.download_reference(ref, current_depth=1)
+
+        assert not files
+        assert len(downloader.skipped_references) == 1
+        mock_format.assert_called_once()
+
+    def test_fetch_reference_markdown_alternate_on_404_when_unconfirmed(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test alternate type retry when type was not API-confirmed."""
+        downloader = ReferenceDownloader("owner", "repo")
         mocker.patch.object(
             downloader,
             "_download_and_format",
             side_effect=[("", None, True), ("# Issue", set(), False)],
         )
-        mocker.patch("pr2md.reference_downloader.write_text_atomic")
 
-        files = downloader.download_reference(ref, current_depth=1)
-        assert files == ["Issue-1.md"]
-
-    def test_download_reference_pr_type_fallback(self, mocker: MockerFixture) -> None:
-        """Test fallback to PR download when issue download fails."""
-        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
-        ref = GitHubReference(
-            ref_type="issue",
-            owner="owner",
-            repo="repo",
-            number=1,
+        markdown, refs, ref_type = downloader._fetch_reference_markdown(
+            "pr", "owner", "repo", 1, type_confirmed=False
         )
 
-        mocker.patch.object(downloader, "determine_ref_type", return_value="issue")
+        assert markdown == "# Issue"
+        assert ref_type == "issue"
+        assert refs == set()
+
+    def test_download_reference_confirmed_type_download_failure(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test download failure is recorded when confirmed type download fails."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
+        ref = GitHubReference(ref_type="issue", owner="owner", repo="repo", number=1)
+
         mocker.patch.object(
             downloader,
-            "_download_and_format",
-            side_effect=[("", None, True), ("# Pull Request", set(), False)],
+            "determine_ref_type_and_payload",
+            return_value=("issue", {"number": 1}),
         )
-        mocker.patch("pr2md.reference_downloader.write_text_atomic")
+        mocker.patch.object(
+            downloader,
+            "_fetch_reference_markdown",
+            return_value=("", None, "issue"),
+        )
 
         files = downloader.download_reference(ref, current_depth=1)
-        assert files == ["PR-1.md"]
+
+        assert not files
+        assert downloader.had_download_failures is True
+        assert len(downloader.skipped_references) == 1
 
     def test_download_reference_success(self, mocker: MockerFixture) -> None:
         """Test successful reference download."""
@@ -466,7 +498,9 @@ class TestReferenceDownloader:
         ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
 
         # Mock determine_ref_type
-        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader, "determine_ref_type_and_payload", return_value=("pr", None)
+        )
 
         # Mock download
         mocker.patch.object(
@@ -512,13 +546,15 @@ class TestReferenceDownloader:
 
         mocker.patch.object(
             downloader,
-            "determine_ref_type",
-            side_effect=lambda _o, _r, number: "pr" if number == 1 else "issue",
+            "determine_ref_type_and_payload",
+            side_effect=lambda _o, _r, number: (
+                ("pr", None) if number == 1 else ("issue", {"number": number})
+            ),
         )
         mocker.patch.object(
             downloader,
             "_download_and_format",
-            side_effect=lambda ref_type, _o, _r, number: (
+            side_effect=lambda ref_type, _o, _r, number, **kwargs: (
                 ("# PR", {child_ref}, False)
                 if number == 1
                 else ("# Issue", set(), False)
@@ -535,7 +571,9 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo", max_depth=2)
         ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
 
-        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader, "determine_ref_type_and_payload", return_value=("pr", None)
+        )
         mocker.patch.object(
             downloader,
             "_download_and_format",
@@ -562,7 +600,9 @@ class TestReferenceDownloader:
             number=1,
             from_url=False,
         )
-        mocker.patch.object(downloader, "determine_ref_type", return_value=None)
+        mocker.patch.object(
+            downloader, "determine_ref_type_and_payload", return_value=(None, None)
+        )
 
         files = downloader.download_reference(ref, current_depth=1)
         assert not files
@@ -597,7 +637,9 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo", max_depth=2)
         ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
 
-        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader, "determine_ref_type_and_payload", return_value=("pr", None)
+        )
         mocker.patch.object(
             downloader,
             "_download_and_format",

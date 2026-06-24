@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from pytest_mock import MockerFixture
 
 from pr2md.validation import (
     validate_depth,
@@ -105,10 +106,30 @@ class TestValidation:
         with pytest.raises(ValueError, match="cannot be empty"):
             validate_output_path("   ")
 
+    def test_validate_output_path_rejects_symlink_component(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+    ) -> None:
+        """Test symlink components are rejected without creating real symlinks."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        monkeypatch.chdir(work_dir)
+
+        original_is_symlink = Path.is_symlink
+
+        def mocked_is_symlink(self: Path) -> bool:
+            if self.name == "escape_link":
+                return True
+            return original_is_symlink(self)
+
+        mocker.patch.object(Path, "is_symlink", mocked_is_symlink)
+
+        with pytest.raises(ValueError, match="contains a symlink component"):
+            validate_output_path("escape_link/outside.md")
+
     def test_validate_output_path_rejects_symlink_escape(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test symlink targets outside CWD are rejected."""
+        """Test symlink targets outside CWD are rejected when symlinks can be created."""
         pytest.importorskip("os")
         import os
 
@@ -126,7 +147,5 @@ class TestValidation:
             pytest.skip(f"cannot create symlink: {err}")
 
         monkeypatch.chdir(work_dir)
-        with pytest.raises(
-            ValueError, match="must be within the current working directory"
-        ):
+        with pytest.raises(ValueError):
             validate_output_path("escape_link/outside.md")

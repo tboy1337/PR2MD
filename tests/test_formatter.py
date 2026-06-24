@@ -423,6 +423,21 @@ class TestMarkdownFormatter:
         assert "depth limit" in summary.lower()
         assert "owner/repo#7" in summary
 
+    def test_format_reference_download_summary_both_sections(self) -> None:
+        """Test summary includes separator when failures and depth skips exist."""
+        failed = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=42)
+        depth = GitHubReference(ref_type="issue", owner="owner", repo="repo", number=7)
+        summary = MarkdownFormatter.format_reference_download_summary(
+            [(failed, "not found")],
+            depth_skipped=[(depth, "Exceeded reference depth limit (--depth 1)")],
+        )
+        assert "## Reference Download Summary" in summary
+        assert "could **not** be downloaded" in summary
+        assert "skipped** (depth limit)" in summary
+        assert summary.index("could **not** be downloaded") < summary.index(
+            "skipped** (depth limit)"
+        )
+
     def test_format_issue_closed_at_overrides_open_status(self) -> None:
         """Test issue header shows CLOSED when closed_at is set."""
         from datetime import datetime, timezone

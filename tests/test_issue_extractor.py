@@ -166,6 +166,48 @@ class TestGitHubIssueExtractor:
         mock_close.assert_not_called()
         shared_client.close()
 
+    def test_fetch_issue_details_uses_cached_payload(
+        self, mocker: MockerFixture, sample_issue_dict: dict[str, Any]
+    ) -> None:
+        """Test cached issue payload avoids a duplicate API request."""
+        extractor = GitHubIssueExtractor(
+            "owner",
+            "repo",
+            123,
+            cached_issue_payload=sample_issue_dict,
+        )
+        mock_get = mocker.patch.object(extractor._client, "get")
+
+        issue = extractor.fetch_issue_details()
+
+        mock_get.assert_not_called()
+        assert issue.number == 123
+
+    def test_fetch_issue_details_skips_warning_when_disabled(
+        self,
+        mocker: MockerFixture,
+        sample_issue_dict: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test PR-as-issue warning can be suppressed after type resolution."""
+        import logging
+
+        pr_data = dict(sample_issue_dict)
+        pr_data["pull_request"] = {"url": "https://api.github.com/repos/o/r/pulls/123"}
+        extractor = GitHubIssueExtractor(
+            "owner",
+            "repo",
+            123,
+            cached_issue_payload=pr_data,
+            warn_if_pull_request=False,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="pr2md.issue_extractor"):
+            issue = extractor.fetch_issue_details()
+
+        assert issue.number == 123
+        assert not any("pull request" in record.message for record in caplog.records)
+
     def test_fetch_issue_details_warns_when_resource_is_pr(
         self,
         mocker: MockerFixture,

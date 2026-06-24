@@ -3,8 +3,7 @@
 A tool for extracting GitHub Pull Request and Issue data and formatting it as Markdown.
 """
 
-from importlib.metadata import PackageNotFoundError, version
-
+from pr2md._version import get_version
 from pr2md.exceptions import GitHubAPIError
 from pr2md.formatter import MarkdownFormatter
 from pr2md.issue_extractor import GitHubIssueExtractor
@@ -19,10 +18,7 @@ from pr2md.models import (
 )
 from pr2md.pr_extractor import GitHubPRExtractor
 
-try:
-    __version__ = version("PR2MD")
-except PackageNotFoundError:
-    __version__ = "1.0.19"
+__version__ = get_version()
 
 __all__ = [
     "Comment",

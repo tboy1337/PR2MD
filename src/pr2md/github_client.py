@@ -5,19 +5,16 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from importlib.metadata import PackageNotFoundError, version
 from types import TracebackType
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
 import requests
 
+from pr2md._version import get_version
 from pr2md.exceptions import GitHubAPIError
 
-try:
-    _PACKAGE_VERSION = version("PR2MD")
-except PackageNotFoundError:
-    _PACKAGE_VERSION = "unknown"
+_PACKAGE_VERSION = get_version()
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +216,29 @@ class GitHubClient:
 
         return items
 
+    def fetch_issue_or_pr_metadata(
+        self, owner: str, repo: str, number: int
+    ) -> tuple[Optional[Literal["issue", "pr"]], Optional[dict[str, Any]]]:
+        """
+        Determine whether a number refers to a PR or issue and return issue payload.
+
+        Uses the issues endpoint which returns both; PRs include a pull_request key.
+        The JSON payload can be reused for issue extraction to avoid a duplicate call.
+        """
+        endpoint = f"/repos/{owner}/{repo}/issues/{number}"
+        try:
+            data = self.get(endpoint)
+        except GitHubAPIError as err:
+            if err.status_code == 404:
+                return None, None
+            raise
+
+        if not isinstance(data, dict):
+            return None, None
+        if data.get("pull_request"):
+            return "pr", None
+        return "issue", data
+
     def fetch_issue_or_pr_type(
         self, owner: str, repo: str, number: int
     ) -> Optional[Literal["issue", "pr"]]:
@@ -227,19 +247,8 @@ class GitHubClient:
 
         Uses the issues endpoint which returns both; PRs include a pull_request key.
         """
-        endpoint = f"/repos/{owner}/{repo}/issues/{number}"
-        try:
-            data = self.get(endpoint)
-        except GitHubAPIError as err:
-            if err.status_code == 404:
-                return None
-            raise
-
-        if not isinstance(data, dict):
-            return None
-        if data.get("pull_request"):
-            return "pr"
-        return "issue"
+        ref_type, _payload = self.fetch_issue_or_pr_metadata(owner, repo, number)
+        return ref_type
 
     def _parse_json_response(self, response: requests.Response, url: str) -> Any:
         try:

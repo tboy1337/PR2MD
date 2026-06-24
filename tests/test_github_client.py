@@ -531,6 +531,46 @@ class TestGitHubClient:
         mock_sleep.assert_not_called()
         client.close()
 
+    def test_proactive_rate_limit_budget_exceeded(self, mocker: MockerFixture) -> None:
+        """Test proactive wait stops when the session wait budget is exhausted."""
+        client = GitHubClient()
+        client._rate_limit_waits = 5
+        client._total_rate_limit_wait_seconds = 3600.0
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+        mock_response.headers = {"X-RateLimit-Remaining": "0", "Retry-After": "1"}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with pytest.raises(GitHubAPIError, match="maximum wait time reached"):
+            client.get("/repos/o/r")
+        client.close()
+
+    def test_fetch_issue_or_pr_metadata_pr(self, mocker: MockerFixture) -> None:
+        """Test metadata probe returns PR type without issue payload."""
+        client = GitHubClient()
+        mocker.patch.object(
+            client,
+            "get",
+            return_value={"number": 1, "pull_request": {"url": "https://example.com"}},
+        )
+
+        ref_type, payload = client.fetch_issue_or_pr_metadata("o", "r", 1)
+        assert ref_type == "pr"
+        assert payload is None
+        client.close()
+
+    def test_fetch_issue_or_pr_metadata_issue(self, mocker: MockerFixture) -> None:
+        """Test metadata probe returns issue payload for reuse."""
+        client = GitHubClient()
+        issue_data = {"number": 1, "title": "Issue"}
+        mocker.patch.object(client, "get", return_value=issue_data)
+
+        ref_type, payload = client.fetch_issue_or_pr_metadata("o", "r", 1)
+        assert ref_type == "issue"
+        assert payload == issue_data
+        client.close()
+
     def test_raise_for_status_forbidden_on_403(self, mocker: MockerFixture) -> None:
         """Test 403 responses surface as access forbidden errors."""
         client = GitHubClient()
@@ -557,19 +597,16 @@ class TestGitHubClient:
 
     def test_package_version_fallback(self, mocker: MockerFixture) -> None:
         """Test package version fallback when metadata is unavailable."""
-        import importlib
         from importlib.metadata import PackageNotFoundError
 
-        import pr2md.github_client as github_client_module
+        from pr2md._version import _fallback_version, get_version
 
         mocker.patch(
-            "importlib.metadata.version",
+            "pr2md._version.version",
             side_effect=PackageNotFoundError("PR2MD"),
         )
-        importlib.reload(github_client_module)
-        assert github_client_module._PACKAGE_VERSION == "unknown"
-        mocker.stopall()
-        importlib.reload(github_client_module)
+        _fallback_version.cache_clear()
+        assert get_version() != "unknown"
 
 
 class TestGitHubAPIError:
@@ -599,6 +636,14 @@ class TestGitHubAPIError:
         assert "failed" in text
         assert "url=https://api.github.com/test" in text
         assert "status_code" not in text
+
+    def test_str_includes_status_without_url(self) -> None:
+        """Test string representation with status code but no URL."""
+        err = GitHubAPIError("failed", status_code=503)
+        text = str(err)
+        assert "failed" in text
+        assert "status_code=503" in text
+        assert "url=" not in text
 
 
 class TestAllowedGithubApiUrl:

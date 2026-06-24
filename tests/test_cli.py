@@ -601,6 +601,66 @@ class TestDownloadReferencesIfNeeded:
 
         instance.download_all_references.assert_called_once_with({other_ref})
 
+    def test_self_reference_only_logs_and_skips_download(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test only self-references produce an info log and skip downloading."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+        instance = mock_downloader.return_value.__enter__.return_value
+        self_ref = GitHubReference(
+            ref_type="pr", owner="owner", repo="repo", number=123
+        )
+        instance.extract_references_from_pr.return_value = {self_ref}
+        mock_pr = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger="pr2md.cli"):
+            success, skipped, depth_skipped = download_references_if_needed(
+                "owner",
+                "repo",
+                "pr",
+                123,
+                "PR-123.md",
+                2,
+                False,
+                False,
+                mock_pr,
+                None,
+                [],
+                [],
+                [],
+            )
+
+        instance.download_all_references.assert_not_called()
+        assert success is True
+        assert not skipped
+        assert not depth_skipped
+        assert any("self-references excluded" in r.message for r in caplog.records)
+
+    def test_issue_path_skips_when_issue_missing(self, mocker: MockerFixture) -> None:
+        """Test issue reference extraction is skipped when issue object is None."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+
+        success, skipped, depth_skipped = download_references_if_needed(
+            "owner",
+            "repo",
+            "issue",
+            456,
+            "Issue-456.md",
+            2,
+            False,
+            False,
+            None,
+            None,
+            [],
+            [],
+            [],
+        )
+
+        mock_downloader.assert_not_called()
+        assert success is True
+        assert not skipped
+        assert not depth_skipped
+
     def test_skips_when_no_references_flag(self, mocker: MockerFixture) -> None:
         """Test reference download is skipped with --no-references."""
         mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
@@ -1001,40 +1061,51 @@ class TestResolvePrimaryRefType:
     def test_returns_same_type_when_matching(self, mocker: MockerFixture) -> None:
         """Test no change when CLI type matches API type."""
         mock_client = mocker.Mock()
-        mock_client.fetch_issue_or_pr_type.return_value = "pr"
+        mock_client.fetch_issue_or_pr_metadata.return_value = ("pr", None)
 
-        assert _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "pr"
+        resolved_type, payload = _resolve_primary_ref_type(
+            "pr", "owner", "repo", 1, mock_client
+        )
+        assert resolved_type == "pr"
+        assert payload is None
 
     def test_auto_corrects_issue_to_pr(self, mocker: MockerFixture) -> None:
         """Test auto-correction when issue arg targets a PR."""
         mock_client = mocker.Mock()
-        mock_client.fetch_issue_or_pr_type.return_value = "pr"
+        mock_client.fetch_issue_or_pr_metadata.return_value = ("pr", None)
 
-        assert (
-            _resolve_primary_ref_type("issue", "owner", "repo", 1, mock_client) == "pr"
+        resolved_type, payload = _resolve_primary_ref_type(
+            "issue", "owner", "repo", 1, mock_client
         )
+        assert resolved_type == "pr"
+        assert payload is None
 
     def test_auto_corrects_pr_to_issue(self, mocker: MockerFixture) -> None:
         """Test auto-correction when pr arg targets an issue."""
         mock_client = mocker.Mock()
-        mock_client.fetch_issue_or_pr_type.return_value = "issue"
+        issue_payload = {"number": 1, "title": "Issue"}
+        mock_client.fetch_issue_or_pr_metadata.return_value = ("issue", issue_payload)
 
-        assert (
-            _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "issue"
+        resolved_type, payload = _resolve_primary_ref_type(
+            "pr", "owner", "repo", 1, mock_client
         )
+        assert resolved_type == "issue"
+        assert payload == issue_payload
 
     def test_returns_original_type_when_not_found(
         self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Test original type is kept when resource is not found."""
         mock_client = mocker.Mock()
-        mock_client.fetch_issue_or_pr_type.return_value = None
+        mock_client.fetch_issue_or_pr_metadata.return_value = (None, None)
 
         with caplog.at_level(logging.WARNING, logger="pr2md.cli"):
-            assert (
-                _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "pr"
+            resolved_type, payload = _resolve_primary_ref_type(
+                "pr", "owner", "repo", 1, mock_client
             )
 
+        assert resolved_type == "pr"
+        assert payload is None
         assert any("not found during type probe" in r.message for r in caplog.records)
 
     def test_run_primary_extraction_uses_resolved_type(
@@ -1132,13 +1203,45 @@ class TestMain:
         """Avoid live API calls for type resolution in main tests."""
         mocker.patch(
             "pr2md.cli._resolve_primary_ref_type",
-            side_effect=lambda ref_type, *_args, **_kwargs: ref_type,
+            side_effect=lambda ref_type, *_args, **_kwargs: (ref_type, None),
         )
 
     @pytest.fixture(autouse=True)
     def _isolated_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Run main() tests in a temp directory so auto-named outputs never land in the repo."""
         monkeypatch.chdir(tmp_path)
+
+    def test_main_type_probe_api_error_exits(self, mocker: MockerFixture) -> None:
+        """Test main exits when shared client type probe fails."""
+        mocker.patch.object(
+            sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/123"]
+        )
+        mocker.patch(
+            "pr2md.cli._resolve_primary_ref_type",
+            side_effect=GitHubAPIError("Rate limit exceeded", status_code=403),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    def test_main_auto_output_validation_error(self, mocker: MockerFixture) -> None:
+        """Test main exits when auto output path validation fails."""
+        mocker.patch.object(
+            sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/123"]
+        )
+        mocker.patch(
+            "pr2md.cli._resolve_primary_ref_type",
+            return_value=("pr", None),
+        )
+        mocker.patch(
+            "pr2md.cli._auto_output_path",
+            side_effect=ValueError("Invalid output path"),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
 
     def test_main_pr_success(self, mocker: MockerFixture) -> None:
         """Test successful main execution for PR."""
@@ -1185,7 +1288,7 @@ class TestMain:
     ) -> None:
         """Test extraction fails when type probe hits a non-404 API error."""
         mock_client = mocker.Mock()
-        mock_client.fetch_issue_or_pr_type.side_effect = GitHubAPIError(
+        mock_client.fetch_issue_or_pr_metadata.side_effect = GitHubAPIError(
             "Rate limit exceeded",
             status_code=403,
         )
@@ -1336,12 +1439,38 @@ class TestMain:
             main()
         assert exc_info.value.code == 1
 
+    def test_append_reference_summary_noop_when_empty(self) -> None:
+        """Test append returns True when there is nothing to summarize."""
+        assert append_reference_summary("output.md", []) is True
+
+    def test_append_reference_summary_noop_when_summary_empty(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test append returns True when formatter produces no summary text."""
+        ref = GitHubReference(ref_type="issue", owner="o", repo="r", number=2)
+        mocker.patch(
+            "pr2md.cli.MarkdownFormatter.format_reference_download_summary",
+            return_value="",
+        )
+        assert append_reference_summary("output.md", [(ref, "reason")]) is True
+
+    def test_append_reference_summary_write_failure(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """Test append returns False when atomic append fails."""
+        output = tmp_path / "PR-1.md"
+        output.write_text("# PR\n", encoding="utf-8")
+        ref = GitHubReference(ref_type="issue", owner="o", repo="r", number=2)
+        mocker.patch("pr2md.cli.append_text_atomic", side_effect=OSError("disk full"))
+
+        assert append_reference_summary(str(output), [(ref, "not found")]) is False
+
     def test_main_auto_corrects_output_filename(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """Test auto output filename uses resolved type, not user-supplied type."""
         mocker.patch.object(sys, "argv", ["pr2md", "owner", "repo", "issue", "42"])
-        mocker.patch("pr2md.cli._resolve_primary_ref_type", return_value="pr")
+        mocker.patch("pr2md.cli._resolve_primary_ref_type", return_value=("pr", None))
         mocker.patch(
             "pr2md.cli.extract_pr_data",
             return_value=("# Markdown", True, MagicMock(), [], [], []),

@@ -58,6 +58,16 @@ def validate_depth(depth: int) -> None:
         raise ValueError(f"Invalid depth: {depth} exceeds maximum of {_MAX_DEPTH}")
 
 
+def _contains_symlink_component(base: Path, logical_path: Path) -> bool:
+    """Return True when any component under *base* is a symlink."""
+    candidate = base
+    for part in logical_path.parts:
+        candidate = candidate / part
+        if candidate.is_symlink():
+            return True
+    return False
+
+
 def validate_output_path(output_path: str) -> str:
     """
     Validate and resolve an output file path within the current working directory.
@@ -72,7 +82,13 @@ def validate_output_path(output_path: str) -> str:
         raise ValueError("Invalid output path: path cannot be empty")
 
     base = Path.cwd().resolve()
-    dest = (base / output_path).resolve()
+    logical = base / output_path
+    if _contains_symlink_component(base, Path(output_path)):
+        raise ValueError(
+            f"Invalid output path: '{output_path}' contains a symlink component"
+        )
+
+    dest = logical.resolve()
     try:
         dest.relative_to(base)
     except ValueError as err:

@@ -237,11 +237,21 @@ class ReferenceDownloader:
         return markdown, references
 
     def _format_issue_reference(
-        self, owner: str, repo: str, number: int
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        cached_issue_payload: Optional[dict[str, object]] = None,
     ) -> tuple[str, set[GitHubReference]]:
         """Download and format an issue reference."""
         with GitHubIssueExtractor(
-            owner, repo, number, client=self._client
+            owner,
+            repo,
+            number,
+            client=self._client,
+            cached_issue_payload=cached_issue_payload,
+            warn_if_pull_request=False,
         ) as extractor:
             issue, comments = extractor.extract_all()
         markdown = MarkdownFormatter.format_issue(issue, comments)
@@ -254,6 +264,8 @@ class ReferenceDownloader:
         owner: str,
         repo: str,
         number: int,
+        *,
+        cached_issue_payload: Optional[dict[str, object]] = None,
     ) -> tuple[str, Optional[set[GitHubReference]], bool]:
         """Download and format a PR or issue reference.
 
@@ -268,7 +280,12 @@ class ReferenceDownloader:
             if ref_type == "pr":
                 markdown, references = self._format_pr_reference(owner, repo, number)
             else:
-                markdown, references = self._format_issue_reference(owner, repo, number)
+                markdown, references = self._format_issue_reference(
+                    owner,
+                    repo,
+                    number,
+                    cached_issue_payload=cached_issue_payload,
+                )
             return markdown, references, False
         except (
             GitHubAPIError,
@@ -337,7 +354,19 @@ class ReferenceDownloader:
         Returns:
             'pr' if it's a pull request, 'issue' if it's an issue, None if not found
         """
-        ref_type = self._client.fetch_issue_or_pr_type(owner, repo, number)
+        ref_type, _payload = self.determine_ref_type_and_payload(owner, repo, number)
+        return ref_type
+
+    def determine_ref_type_and_payload(
+        self, owner: str, repo: str, number: int
+    ) -> tuple[Optional[Literal["issue", "pr"]], Optional[dict[str, object]]]:
+        """
+        Determine reference type and return cached issue payload when applicable.
+
+        Returns:
+            Tuple of (ref_type, issue_payload). issue_payload is set only for issues.
+        """
+        ref_type, payload = self._client.fetch_issue_or_pr_metadata(owner, repo, number)
         if ref_type is None:
             logger.warning(
                 "Could not determine type for %s/%s #%d (not found)",
@@ -345,7 +374,11 @@ class ReferenceDownloader:
                 repo,
                 number,
             )
-        return ref_type
+            return None, None
+        issue_payload: Optional[dict[str, object]] = (
+            payload if ref_type == "issue" else None
+        )
+        return ref_type, issue_payload
 
     def _reference_with_type(
         self, reference: GitHubReference, ref_type: Literal["issue", "pr"]
@@ -365,15 +398,22 @@ class ReferenceDownloader:
         owner: str,
         repo: str,
         number: int,
+        *,
+        type_confirmed: bool = False,
+        cached_issue_payload: Optional[dict[str, object]] = None,
     ) -> tuple[str, Optional[set[GitHubReference]], Literal["issue", "pr"]]:
         """Download markdown, falling back to the alternate type only on 404."""
         markdown, found_refs, try_alternate = self._download_and_format(
-            ref_type, owner, repo, number
+            ref_type,
+            owner,
+            repo,
+            number,
+            cached_issue_payload=cached_issue_payload,
         )
         if markdown:
             return markdown, found_refs, ref_type
 
-        if not try_alternate:
+        if not try_alternate or type_confirmed:
             return "", found_refs, ref_type
 
         alternate: Literal["issue", "pr"] = "issue" if ref_type == "pr" else "pr"
@@ -422,7 +462,7 @@ class ReferenceDownloader:
             )
             return []
 
-        actual_type = self.determine_ref_type(
+        actual_type, cached_issue_payload = self.determine_ref_type_and_payload(
             reference.owner, reference.repo, reference.number
         )
         if actual_type is None:
@@ -439,6 +479,8 @@ class ReferenceDownloader:
             reference.owner,
             reference.repo,
             reference.number,
+            type_confirmed=True,
+            cached_issue_payload=cached_issue_payload,
         )
         reference = self._reference_with_type(reference, ref_type)
 

@@ -110,6 +110,50 @@ class TestAppendTextAtomic:
         append_text_atomic(target, "\nsecond")
         assert target.read_text(encoding="utf-8") == "first\nsecond"
 
+    def test_cleans_up_temp_file_on_write_failure(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """Test temp file is removed when append write fails."""
+        target = tmp_path / "output.md"
+        target.write_text("existing", encoding="utf-8")
+        original_write_text = Path.write_text
+
+        def failing_write_text(
+            self: Path, data: str, encoding: str = "utf-8", errors: str | None = None
+        ) -> int:
+            if self.name.endswith(".tmp"):
+                raise OSError("disk full")
+            return original_write_text(self, data, encoding=encoding, errors=errors)
+
+        mocker.patch.object(Path, "write_text", failing_write_text)
+
+        with pytest.raises(OSError, match="disk full"):
+            append_text_atomic(target, "\nappended")
+
+        assert not list(tmp_path.glob("*.tmp"))
+        assert target.read_text(encoding="utf-8") == "existing"
+
+    def test_cleans_up_temp_file_on_append_replace_failure(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """Test temp file is removed when append replace fails."""
+        target = tmp_path / "output.md"
+        target.write_text("existing", encoding="utf-8")
+        original_replace = Path.replace
+
+        def failing_replace(self: Path, target_path: Path) -> Path:
+            if self.name.endswith(".tmp"):
+                raise OSError("replace failed")
+            return original_replace(self, target_path)
+
+        mocker.patch.object(Path, "replace", failing_replace)
+
+        with pytest.raises(OSError, match="replace failed"):
+            append_text_atomic(target, "\nappended")
+
+        assert not list(tmp_path.glob("*.tmp"))
+        assert target.read_text(encoding="utf-8") == "existing"
+
 
 class TestLogOverwriteIfExists:
     """Tests for log_overwrite_if_exists."""

@@ -1,7 +1,6 @@
 """Tests for pr2md package initialization."""
 
 import importlib
-import re
 import tomllib
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
@@ -16,17 +15,6 @@ def _pyproject_version() -> str:
         return str(tomllib.load(pyproject_file)["project"]["version"])
 
 
-def _init_fallback_version() -> str:
-    init_path = Path(__file__).resolve().parent.parent / "src" / "pr2md" / "__init__.py"
-    init_text = init_path.read_text(encoding="utf-8")
-    match = re.search(
-        r'except PackageNotFoundError:\s+__version__ = "([^"]+)"',
-        init_text,
-    )
-    assert match is not None, "Could not find __version__ fallback in __init__.py"
-    return str(match.group(1))
-
-
 class TestPackageInit:
     """Tests for pr2md.__init__ exports and version."""
 
@@ -37,9 +25,17 @@ class TestPackageInit:
         assert pr2md.__version__
         assert isinstance(pr2md.__version__, str)
 
-    def test_fallback_version_matches_pyproject(self) -> None:
-        """Test hardcoded __version__ fallback matches pyproject.toml."""
-        assert _init_fallback_version() == _pyproject_version()
+    def test_fallback_version_matches_pyproject(self, mocker: MockerFixture) -> None:
+        """Test get_version fallback matches pyproject.toml when uninstalled."""
+        from pr2md._version import _fallback_version, get_version
+
+        expected_version = _pyproject_version()
+        mocker.patch(
+            "pr2md._version.version",
+            side_effect=PackageNotFoundError("PR2MD"),
+        )
+        _fallback_version.cache_clear()
+        assert get_version() == expected_version
 
     def test_version_fallback_when_metadata_missing(
         self, mocker: MockerFixture
@@ -50,9 +46,12 @@ class TestPackageInit:
         expected_version = _pyproject_version()
 
         mocker.patch(
-            "importlib.metadata.version",
+            "pr2md._version.version",
             side_effect=PackageNotFoundError("PR2MD"),
         )
+        from pr2md._version import _fallback_version
+
+        _fallback_version.cache_clear()
         importlib.reload(pr2md)
         assert pr2md.__version__ == expected_version
         importlib.reload(pr2md)
