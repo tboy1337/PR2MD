@@ -402,13 +402,17 @@ def extract_issue_data(
 def append_reference_summary(
     output_path: str,
     skipped: list[tuple[GitHubReference, str]],
+    *,
+    depth_skipped: list[tuple[GitHubReference, str]] | None = None,
 ) -> bool:
     """Append a reference download summary section to an existing output file."""
-    if not skipped:
+    if not skipped and not depth_skipped:
         return True
 
     logger = logging.getLogger(__name__)
-    summary = MarkdownFormatter.format_reference_download_summary(skipped)
+    summary = MarkdownFormatter.format_reference_download_summary(
+        skipped, depth_skipped=depth_skipped
+    )
     if not summary:
         return True
 
@@ -464,12 +468,12 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     review_comments: list[ReviewComment],
     *,
     client: Optional[GitHubClient] = None,
-) -> tuple[bool, list[tuple[GitHubReference, str]]]:
+) -> tuple[bool, list[tuple[GitHubReference, str]], list[tuple[GitHubReference, str]]]:
     """
     Download referenced PRs and issues when auto-naming is used.
 
     Returns:
-        Tuple of (all succeeded, list of skipped references with reasons)
+        Tuple of (all succeeded, failed references with reasons, depth-skipped refs)
     """
     logger = logging.getLogger(__name__)
     type_str = "PR" if ref_type == "pr" else "Issue"
@@ -478,7 +482,7 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     )
 
     if not using_auto_naming or no_references or not (pull_request or issue):
-        return True, []
+        return True, [], []
 
     logger.info("Scanning for referenced PRs and issues...")
 
@@ -491,12 +495,12 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
             )
         else:
             if issue is None:
-                return True, []
+                return True, [], []
             references = downloader.extract_references_from_issue(issue, comments)
 
         if not references:
             logger.info("No references found in %s", type_str)
-            return True, []
+            return True, [], []
 
         primary_key = (owner, repo, number)
         references = {
@@ -509,7 +513,7 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
                 "No external references found in %s (self-references excluded)",
                 type_str,
             )
-            return True, []
+            return True, [], []
 
         logger.info("Found %d references to download", len(references))
         downloaded_files = downloader.download_all_references(references)
@@ -526,7 +530,11 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
         if downloader.skipped_references:
             downloader.log_skipped_summary()
 
-        return not downloader.had_download_failures, downloader.skipped_references
+        return (
+            not downloader.had_download_failures,
+            downloader.skipped_references,
+            downloader.skipped_depth_references,
+        )
 
 
 def _resolve_primary_ref_type(
@@ -541,6 +549,15 @@ def _resolve_primary_ref_type(
     actual_type = client.fetch_issue_or_pr_type(owner, repo, number)
 
     if actual_type is None or actual_type == ref_type:
+        if actual_type is None:
+            logger.warning(
+                "Resource #%d in %s/%s was not found during type probe; "
+                "proceeding with user-specified type '%s'",
+                number,
+                owner,
+                repo,
+                ref_type,
+            )
         return ref_type
 
     if actual_type == "pr":
@@ -678,25 +695,31 @@ def _execute_cli(cli_args: ParsedArguments) -> None:  # pylint: disable=too-many
 
         logger.info("Extraction completed successfully")
 
-        references_ok, skipped_references = download_references_if_needed(
-            cli_args.owner,
-            cli_args.repo,
-            resolved_type,
-            cli_args.number,
-            output_path,
-            cli_args.depth,
-            cli_args.no_references,
-            cli_args.verbose,
-            pull_request,
-            issue,
-            comments,
-            reviews,
-            review_comments,
-            client=client,
+        references_ok, skipped_references, depth_skipped_references = (
+            download_references_if_needed(
+                cli_args.owner,
+                cli_args.repo,
+                resolved_type,
+                cli_args.number,
+                output_path,
+                cli_args.depth,
+                cli_args.no_references,
+                cli_args.verbose,
+                pull_request,
+                issue,
+                comments,
+                reviews,
+                review_comments,
+                client=client,
+            )
         )
 
-        if skipped_references and output_path:
-            if not append_reference_summary(output_path, skipped_references):
+        if (skipped_references or depth_skipped_references) and output_path:
+            if not append_reference_summary(
+                output_path,
+                skipped_references,
+                depth_skipped=depth_skipped_references,
+            ):
                 sys.exit(1)
 
         if cli_args.strict and not references_ok:

@@ -22,7 +22,7 @@ from pr2md.pr_extractor import GitHubPRExtractor
 try:
     __version__ = version("PR2MD")
 except PackageNotFoundError:
-    __version__ = "1.0.17"
+    __version__ = "1.0.18"
 
 __all__ = [
     "Comment",

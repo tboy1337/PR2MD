@@ -165,3 +165,23 @@ class TestGitHubIssueExtractor:
 
         mock_close.assert_not_called()
         shared_client.close()
+
+    def test_fetch_issue_details_warns_when_resource_is_pr(
+        self,
+        mocker: MockerFixture,
+        sample_issue_dict: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test warning when issue endpoint returns a pull request."""
+        import logging
+
+        extractor = GitHubIssueExtractor("owner", "repo", 123)
+        pr_data = dict(sample_issue_dict)
+        pr_data["pull_request"] = {"url": "https://api.github.com/repos/o/r/pulls/123"}
+        mocker.patch.object(extractor._client, "get", return_value=pr_data)
+
+        with caplog.at_level(logging.WARNING, logger="pr2md.issue_extractor"):
+            issue = extractor.fetch_issue_details()
+
+        assert issue.number == 456
+        assert any("pull request" in record.message for record in caplog.records)

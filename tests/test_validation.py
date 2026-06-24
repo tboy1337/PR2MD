@@ -97,3 +97,36 @@ class TestValidation:
             ValueError, match="must be within the current working directory"
         ):
             validate_output_path("../../outside.md")
+
+    def test_validate_output_path_rejects_empty(self) -> None:
+        """Test empty output paths are rejected."""
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_output_path("")
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_output_path("   ")
+
+    def test_validate_output_path_rejects_symlink_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test symlink targets outside CWD are rejected."""
+        pytest.importorskip("os")
+        import os
+
+        if not hasattr(os, "symlink"):
+            pytest.skip("symlinks not supported on this platform")
+
+        work_dir = tmp_path / "work"
+        outside_dir = tmp_path / "outside"
+        work_dir.mkdir()
+        outside_dir.mkdir()
+        link_path = work_dir / "escape_link"
+        try:
+            os.symlink(outside_dir, link_path, target_is_directory=True)
+        except OSError as err:
+            pytest.skip(f"cannot create symlink: {err}")
+
+        monkeypatch.chdir(work_dir)
+        with pytest.raises(
+            ValueError, match="must be within the current working directory"
+        ):
+            validate_output_path("escape_link/outside.md")

@@ -69,6 +69,14 @@ class GitHubIssueExtractor:
         logger.info("Fetching issue details")
         endpoint = f"/repos/{self.owner}/{self.repo}/issues/{self.issue_number}"
         data: dict[str, Any] = self._client.get(endpoint)
+        if data.get("pull_request"):
+            logger.warning(
+                "Issue #%d in %s/%s is a pull request; use GitHubPRExtractor for "
+                "full diff and reviews",
+                self.issue_number,
+                self.owner,
+                self.repo,
+            )
         return Issue.from_dict(data)
 
     def fetch_comments(self) -> list[Comment]:

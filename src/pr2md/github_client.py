@@ -110,12 +110,15 @@ class GitHubClient:
     def __init__(self) -> None:
         self.base_url = "https://api.github.com"
         self.session = requests.Session()
+        self.session.trust_env = False
         self.session.headers.update(
             {
                 "Accept": "application/vnd.github.v3+json",
                 "User-Agent": f"PR2MD/{_PACKAGE_VERSION}",
             }
         )
+        self._rate_limit_waits = 0
+        self._total_rate_limit_wait_seconds = 0.0
 
     def __enter__(self) -> "GitHubClient":
         return self
@@ -266,8 +269,6 @@ class GitHubClient:
             merged_headers.update(headers)
 
         transient_attempt = 0
-        rate_limit_waits = 0
-        total_rate_limit_wait_seconds = 0.0
 
         while True:
             try:
@@ -295,29 +296,7 @@ class GitHubClient:
             _log_rate_limit_headers(response)
 
             if _is_rate_limited(response):
-                wait_seconds = _rate_limit_wait_seconds(response)
-                rate_limit_waits += 1
-                total_rate_limit_wait_seconds += wait_seconds
-                if (
-                    rate_limit_waits > _MAX_RATE_LIMIT_WAITS
-                    or total_rate_limit_wait_seconds > _MAX_RATE_LIMIT_WAIT_SECONDS
-                ):
-                    raise GitHubAPIError(
-                        "GitHub API rate limit exceeded; maximum wait time reached. "
-                        "Try again later or reduce the number of requests.",
-                        status_code=response.status_code,
-                        url=url,
-                    )
-                resume_at = datetime.now(timezone.utc).timestamp() + wait_seconds
-                resume_str = datetime.fromtimestamp(
-                    resume_at, tz=timezone.utc
-                ).strftime("%Y-%m-%d %H:%M:%S UTC")
-                logger.info(
-                    "Rate limited by GitHub API; waiting %.0fs (resuming ~%s)",
-                    wait_seconds,
-                    resume_str,
-                )
-                time.sleep(wait_seconds)
+                self._wait_for_rate_limit(response, url)
                 transient_attempt = 0
                 continue
 
@@ -327,7 +306,76 @@ class GitHubClient:
                     transient_attempt += 1
                     continue
 
+            self._maybe_wait_proactive_rate_limit(response, url)
             return response
+
+    def _wait_for_rate_limit(self, response: requests.Response, url: str) -> None:
+        """Sleep until rate limit resets, enforcing session wait budgets."""
+        wait_seconds = _rate_limit_wait_seconds(response)
+        self._rate_limit_waits += 1
+        self._total_rate_limit_wait_seconds += wait_seconds
+        if (
+            self._rate_limit_waits > _MAX_RATE_LIMIT_WAITS
+            or self._total_rate_limit_wait_seconds > _MAX_RATE_LIMIT_WAIT_SECONDS
+        ):
+            raise GitHubAPIError(
+                "GitHub API rate limit exceeded; maximum wait time reached. "
+                "Try again later or reduce the number of requests.",
+                status_code=response.status_code,
+                url=url,
+            )
+        resume_at = datetime.now(timezone.utc).timestamp() + wait_seconds
+        resume_str = datetime.fromtimestamp(resume_at, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        logger.info(
+            "Rate limited by GitHub API; waiting %.0fs (resuming ~%s)",
+            wait_seconds,
+            resume_str,
+        )
+        time.sleep(wait_seconds)
+
+    def _maybe_wait_proactive_rate_limit(
+        self, response: requests.Response, url: str
+    ) -> None:
+        """Wait before the next request when the quota is already exhausted."""
+        if response.status_code != 200:
+            return
+
+        remaining_header = response.headers.get("X-RateLimit-Remaining")
+        if remaining_header is None:
+            return
+        try:
+            remaining = int(remaining_header)
+        except ValueError:
+            return
+        if remaining > 0:
+            return
+
+        wait_seconds = _rate_limit_wait_seconds(response)
+        self._rate_limit_waits += 1
+        self._total_rate_limit_wait_seconds += wait_seconds
+        if (
+            self._rate_limit_waits > _MAX_RATE_LIMIT_WAITS
+            or self._total_rate_limit_wait_seconds > _MAX_RATE_LIMIT_WAIT_SECONDS
+        ):
+            raise GitHubAPIError(
+                "GitHub API rate limit exceeded; maximum wait time reached. "
+                "Try again later or reduce the number of requests.",
+                status_code=response.status_code,
+                url=url,
+            )
+        resume_at = datetime.now(timezone.utc).timestamp() + wait_seconds
+        resume_str = datetime.fromtimestamp(resume_at, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        logger.info(
+            "GitHub API quota exhausted (0 remaining); waiting %.0fs before "
+            "continuing (resuming ~%s)",
+            wait_seconds,
+            resume_str,
+        )
+        time.sleep(wait_seconds)
 
     def _raise_for_status(self, response: requests.Response, url: str) -> None:
         status = response.status_code

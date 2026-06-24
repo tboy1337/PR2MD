@@ -412,6 +412,43 @@ class TestMarkdownFormatter:
         assert "not found" in summary
         assert MarkdownFormatter.format_reference_download_summary([]) == ""
 
+    def test_format_reference_download_summary_depth_skipped(self) -> None:
+        """Test depth-limited reference summary formatting."""
+        ref = GitHubReference(ref_type="issue", owner="owner", repo="repo", number=7)
+        summary = MarkdownFormatter.format_reference_download_summary(
+            [],
+            depth_skipped=[(ref, "Exceeded reference depth limit (--depth 1)")],
+        )
+        assert "skipped" in summary.lower()
+        assert "depth limit" in summary.lower()
+        assert "owner/repo#7" in summary
+
+    def test_format_issue_closed_at_overrides_open_status(self) -> None:
+        """Test issue header shows CLOSED when closed_at is set."""
+        from datetime import datetime, timezone
+
+        from pr2md.models import Issue, User
+
+        issue = Issue(
+            number=1,
+            title="Open but closed",
+            body=None,
+            state="open",
+            user=User(
+                login="user",
+                id=1,
+                avatar_url="https://example.com/a",
+                html_url="https://github.com/user",
+            ),
+            created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+            closed_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
+            html_url="https://github.com/o/r/issues/1",
+            labels=[],
+        )
+        header = MarkdownFormatter._format_issue_header(issue)
+        assert "**Status:** CLOSED" in header
+
     def test_format_pr_complete(
         self,
         sample_pr: PullRequest,

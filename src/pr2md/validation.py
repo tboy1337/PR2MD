@@ -68,13 +68,16 @@ def validate_output_path(output_path: str) -> str:
     Raises:
         ValueError: If the path escapes the current working directory
     """
-    cwd = Path.cwd().resolve()
-    resolved = Path(output_path).resolve()
+    if not output_path or not output_path.strip():
+        raise ValueError("Invalid output path: path cannot be empty")
+
+    base = Path.cwd().resolve()
+    dest = (base / output_path).resolve()
     try:
-        resolved.relative_to(cwd)
+        dest.relative_to(base)
     except ValueError as err:
         raise ValueError(
             f"Invalid output path: '{output_path}' must be within the current "
-            f"working directory ({cwd})"
+            f"working directory ({base})"
         ) from err
-    return str(resolved)
+    return str(dest)

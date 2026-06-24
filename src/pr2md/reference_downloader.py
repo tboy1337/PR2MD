@@ -48,6 +48,7 @@ class ReferenceDownloader:
         self.downloaded: set[GitHubReference] = set()
         self._downloaded_keys: set[tuple[str, str, int]] = set()
         self.skipped_references: list[tuple[GitHubReference, str]] = []
+        self.skipped_depth_references: list[tuple[GitHubReference, str]] = []
         self.had_download_failures = False
         self._owns_client = client is None
         self._client = client or GitHubClient()
@@ -78,6 +79,12 @@ class ReferenceDownloader:
         """Record a reference that could not be downloaded."""
         self.skipped_references.append((reference, reason))
         self.had_download_failures = True
+
+    def record_depth_skipped_reference(
+        self, reference: GitHubReference, reason: str
+    ) -> None:
+        """Record a reference skipped due to the depth limit (not a failure)."""
+        self.skipped_depth_references.append((reference, reason))
 
     def log_skipped_summary(self) -> None:
         """Log a summary of skipped references."""
@@ -402,6 +409,10 @@ class ReferenceDownloader:
                 reference.repo,
                 reference.ref_type,
                 reference.number,
+            )
+            self.record_depth_skipped_reference(
+                reference,
+                f"Exceeded reference depth limit (--depth {self.max_depth})",
             )
             return []
 

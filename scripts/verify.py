@@ -77,7 +77,20 @@ def main() -> None:
         ),
         ("pylint (verify)", _python_m("pylint", verify_script)),
         ("bandit", _python_m("bandit", "-r", "src/pr2md", "-q")),
-        ("safety", _python_m("safety", "check", "--full-report")),
+        # safety scan requires interactive auth (safety auth login); check still
+        # runs non-interactively against explicit requirement files.
+        (
+            "safety",
+            _python_m(
+                "safety",
+                "check",
+                "-r",
+                "requirements.txt",
+                "-r",
+                "requirements-dev.txt",
+                "--full-report",
+            ),
+        ),
         ("pytest", _python_m("pytest")),
     ]
 

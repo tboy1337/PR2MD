@@ -254,6 +254,7 @@ Install the package and development dependencies:
 
 ```bash
 pip install -e .
+pip install -e ".[dev]"
 pip install -r requirements-dev.txt
 ```
 

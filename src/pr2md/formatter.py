@@ -341,20 +341,12 @@ class MarkdownFormatter:
         return f"## Description\n\n{issue.body}"
 
     @staticmethod
-    def format_reference_download_summary(
-        skipped: list[tuple[GitHubReference, str]],
-    ) -> str:
-        """Format a markdown section listing references that failed to download."""
-        if not skipped:
-            return ""
-
-        lines = [
-            "## Reference Download Summary",
-            "",
-            "The following referenced items could **not** be downloaded:",
-            "",
-        ]
-        for reference, reason in skipped:
+    def _format_reference_summary_items(
+        items: list[tuple[GitHubReference, str]],
+    ) -> list[str]:
+        """Format reference summary bullet lines."""
+        lines: list[str] = []
+        for reference, reason in items:
             type_label = "PR" if reference.ref_type == "pr" else "Issue"
             path_segment = "pull" if reference.ref_type == "pr" else "issues"
             lines.append(
@@ -363,4 +355,42 @@ class MarkdownFormatter:
                 f"{reference.owner}/{reference.repo}/"
                 f"{path_segment}/{reference.number}): {reason}"
             )
+        return lines
+
+    @staticmethod
+    def format_reference_download_summary(
+        skipped: list[tuple[GitHubReference, str]],
+        *,
+        depth_skipped: list[tuple[GitHubReference, str]] | None = None,
+    ) -> str:
+        """Format a markdown section listing reference download outcomes."""
+        depth_items = depth_skipped or []
+        if not skipped and not depth_items:
+            return ""
+
+        lines = [
+            "## Reference Download Summary",
+            "",
+        ]
+
+        if skipped:
+            lines.extend(
+                [
+                    "The following referenced items could **not** be downloaded:",
+                    "",
+                ]
+            )
+            lines.extend(MarkdownFormatter._format_reference_summary_items(skipped))
+
+        if depth_items:
+            if skipped:
+                lines.append("")
+            lines.extend(
+                [
+                    "The following referenced items were **skipped** (depth limit):",
+                    "",
+                ]
+            )
+            lines.extend(MarkdownFormatter._format_reference_summary_items(depth_items))
+
         return "\n".join(lines)

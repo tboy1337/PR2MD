@@ -621,9 +621,10 @@ class TestDownloadReferencesIfNeeded:
         instance.download_all_references.return_value = []
         instance.had_download_failures = True
         instance.skipped_references = []
+        instance.skipped_depth_references = []
         mock_pr = MagicMock()
 
-        success, skipped = download_references_if_needed(
+        success, skipped, depth_skipped = download_references_if_needed(
             "owner",
             "repo",
             "pr",
@@ -641,6 +642,7 @@ class TestDownloadReferencesIfNeeded:
 
         assert success is False
         assert not skipped
+        assert not depth_skipped
 
     def test_download_references_for_issue_auto_naming(
         self, mocker: MockerFixture
@@ -674,7 +676,7 @@ class TestDownloadReferencesIfNeeded:
         mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
         mock_pr = MagicMock()
 
-        success, skipped = download_references_if_needed(
+        success, skipped, depth_skipped = download_references_if_needed(
             "owner",
             "repo",
             "pr",
@@ -693,6 +695,7 @@ class TestDownloadReferencesIfNeeded:
         mock_downloader.assert_not_called()
         assert success is True
         assert not skipped
+        assert not depth_skipped
 
     def test_append_reference_summary(self, tmp_path: Path) -> None:
         """Test appending reference summary to an existing file."""
@@ -704,6 +707,51 @@ class TestDownloadReferencesIfNeeded:
         content = output.read_text(encoding="utf-8")
         assert "## Reference Download Summary" in content
         assert "not found" in content
+
+    def test_append_reference_summary_depth_skipped_only(self, tmp_path: Path) -> None:
+        """Test appending depth-limit summary without failures."""
+        output = tmp_path / "PR-1.md"
+        output.write_text("# PR\n", encoding="utf-8")
+        ref = GitHubReference(ref_type="issue", owner="o", repo="r", number=2)
+
+        assert (
+            append_reference_summary(
+                str(output),
+                [],
+                depth_skipped=[(ref, "Exceeded reference depth limit (--depth 1)")],
+            )
+            is True
+        )
+        content = output.read_text(encoding="utf-8")
+        assert "skipped" in content.lower()
+        assert "depth limit" in content.lower()
+
+    def test_main_strict_ignores_depth_skips_only(self, mocker: MockerFixture) -> None:
+        """Test --strict does not fail when only depth-limited refs were skipped."""
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123", "--strict"],
+        )
+        mock_pr = MagicMock()
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, mock_pr, [], [], []),
+        )
+        mocker.patch("pr2md.cli.write_output", return_value=True)
+        depth_skipped = [
+            (
+                GitHubReference(ref_type="issue", owner="owner", repo="repo", number=2),
+                "Exceeded reference depth limit (--depth 1)",
+            )
+        ]
+        mocker.patch(
+            "pr2md.cli.download_references_if_needed",
+            return_value=(True, [], depth_skipped),
+        )
+        mocker.patch("pr2md.cli.append_reference_summary", return_value=True)
+
+        main()
 
 
 class TestExtractPRData:
@@ -962,12 +1010,19 @@ class TestResolvePrimaryRefType:
             _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "issue"
         )
 
-    def test_returns_original_type_when_not_found(self, mocker: MockerFixture) -> None:
+    def test_returns_original_type_when_not_found(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Test original type is kept when resource is not found."""
         mock_client = mocker.Mock()
         mock_client.fetch_issue_or_pr_type.return_value = None
 
-        assert _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "pr"
+        with caplog.at_level(logging.WARNING, logger="pr2md.cli"):
+            assert (
+                _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "pr"
+            )
+
+        assert any("not found during type probe" in r.message for r in caplog.records)
 
     def test_run_primary_extraction_uses_resolved_type(
         self, mocker: MockerFixture
@@ -1070,7 +1125,7 @@ class TestMain:
         mocker.patch("pr2md.cli.write_output", return_value=True)
         mocker.patch(
             "pr2md.cli.download_references_if_needed",
-            return_value=(True, []),
+            return_value=(True, [], []),
         )
 
         main()
@@ -1167,7 +1222,7 @@ class TestMain:
         mocker.patch("pr2md.cli.write_output", return_value=True)
         mocker.patch(
             "pr2md.cli.download_references_if_needed",
-            return_value=(False, []),
+            return_value=(False, [], []),
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -1195,7 +1250,7 @@ class TestMain:
         ]
         mocker.patch(
             "pr2md.cli.download_references_if_needed",
-            return_value=(False, skipped),
+            return_value=(False, skipped, []),
         )
         mocker.patch("pr2md.cli.append_reference_summary", return_value=False)
 
@@ -1224,7 +1279,7 @@ class TestMain:
         ]
         mocker.patch(
             "pr2md.cli.download_references_if_needed",
-            return_value=(False, skipped),
+            return_value=(False, skipped, []),
         )
         mocker.patch(
             "pr2md.cli.Path.read_text",
@@ -1248,7 +1303,7 @@ class TestMain:
         mock_write = mocker.patch("pr2md.cli.write_output", return_value=True)
         mocker.patch(
             "pr2md.cli.download_references_if_needed",
-            return_value=(True, []),
+            return_value=(True, [], []),
         )
         mocker.patch(
             "pr2md.cli.validate_output_path", side_effect=lambda p: str(tmp_path / p)

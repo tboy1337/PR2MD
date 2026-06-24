@@ -122,6 +122,57 @@ class TestReferenceDownloader:
 
         assert len(references) >= 2  # At least #123 and owner/repo#456 from PR body
 
+    def test_extract_references_from_pr_includes_reviews(
+        self, sample_pr: PullRequest, sample_comment: Comment
+    ) -> None:
+        """Test extracting references from review and review-comment bodies."""
+        from datetime import datetime, timezone
+
+        from pr2md.models import Review, ReviewComment, User
+
+        downloader = ReferenceDownloader("owner", "repo")
+        user = User(
+            login="reviewer",
+            id=1,
+            avatar_url="https://example.com/a",
+            html_url="https://github.com/reviewer",
+        )
+        reviews = [
+            Review(
+                id=1,
+                user=user,
+                body="See also #55",
+                state="APPROVED",
+                html_url="https://github.com/o/r/pull/1#pullrequestreview-1",
+                submitted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                commit_id="abc",
+            )
+        ]
+        review_comments = [
+            ReviewComment(
+                id=2,
+                user=user,
+                body="Related: other/repo#99",
+                path="file.py",
+                position=1,
+                original_position=1,
+                commit_id="abc",
+                original_commit_id="abc",
+                diff_hunk="@@",
+                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                html_url="https://github.com/o/r/pull/1#discussion_r2",
+                in_reply_to_id=None,
+            )
+        ]
+        references = downloader.extract_references_from_pr(
+            sample_pr, [sample_comment], reviews, review_comments
+        )
+
+        numbers = {ref.number for ref in references}
+        assert 55 in numbers
+        assert 99 in numbers
+
     def test_extract_references_from_issue(
         self, sample_issue: Issue, sample_comment: Comment
     ) -> None:
@@ -358,6 +409,13 @@ class TestReferenceDownloader:
 
         assert len(files) == 0
         assert "depth limit" in caplog.text.lower()
+        assert len(downloader.skipped_depth_references) == 1
+        assert not downloader.had_download_failures
+
+    def test_log_skipped_summary_empty(self) -> None:
+        """Test skipped summary is a no-op when nothing failed."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
+        downloader.log_skipped_summary()
 
     def test_download_reference_url_type_fallback(self, mocker: MockerFixture) -> None:
         """Test fallback to alternate type when URL path mismatches resource."""
@@ -379,6 +437,26 @@ class TestReferenceDownloader:
 
         files = downloader.download_reference(ref, current_depth=1)
         assert files == ["Issue-1.md"]
+
+    def test_download_reference_pr_type_fallback(self, mocker: MockerFixture) -> None:
+        """Test fallback to PR download when issue download fails."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
+        ref = GitHubReference(
+            ref_type="issue",
+            owner="owner",
+            repo="repo",
+            number=1,
+        )
+
+        mocker.patch.object(downloader, "determine_ref_type", return_value="issue")
+        mocker.patch.object(downloader, "download_issue", return_value=("", None))
+        mocker.patch.object(
+            downloader, "download_pr", return_value=("# Pull Request", set())
+        )
+        mocker.patch("pr2md.reference_downloader.write_text_atomic")
+
+        files = downloader.download_reference(ref, current_depth=1)
+        assert files == ["PR-1.md"]
 
     def test_download_reference_success(self, mocker: MockerFixture) -> None:
         """Test successful reference download."""

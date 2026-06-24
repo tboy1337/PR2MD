@@ -495,6 +495,84 @@ class TestGitHubClient:
         assert mock_get.call_count == 3
         client.close()
 
+    def test_session_trust_env_disabled(self) -> None:
+        """Test HTTP session ignores proxy environment variables."""
+        client = GitHubClient()
+        assert client.session.trust_env is False
+        client.close()
+
+    def test_proactive_wait_when_remaining_zero(self, mocker: MockerFixture) -> None:
+        """Test proactive wait when successful response has zero remaining quota."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+        mock_response.headers = {"X-RateLimit-Remaining": "0", "Retry-After": "1"}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+        mock_sleep = mocker.patch("pr2md.github_client.time.sleep")
+
+        assert client.get("/repos/o/r") == {"ok": True}
+        mock_sleep.assert_called_once_with(1.0)
+        client.close()
+
+    def test_proactive_wait_skipped_when_remaining_positive(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test no proactive wait when quota remains."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+        mock_response.headers = {"X-RateLimit-Remaining": "10"}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+        mock_sleep = mocker.patch("pr2md.github_client.time.sleep")
+
+        assert client.get("/repos/o/r") == {"ok": True}
+        mock_sleep.assert_not_called()
+        client.close()
+
+    def test_raise_for_status_unexpected_rate_limit_on_403(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test defensive handling when rate limit slips past retry loop."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 403
+        mock_response.text = "API rate limit exceeded"
+        mock_response.headers = {}
+
+        with pytest.raises(GitHubAPIError, match="rate limit exceeded unexpectedly"):
+            client._raise_for_status(mock_response, "https://api.github.com/repos/o/r")
+        client.close()
+
+    def test_log_rate_limit_invalid_remaining_header(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test invalid X-RateLimit-Remaining header is ignored safely."""
+        from pr2md.github_client import _log_rate_limit_headers
+
+        response = mocker.Mock()
+        response.headers = {"X-RateLimit-Remaining": "not-a-number"}
+        with caplog.at_level(logging.DEBUG, logger="pr2md.github_client"):
+            _log_rate_limit_headers(response)
+        assert not any("nearly exhausted" in r.message for r in caplog.records)
+
+    def test_package_version_fallback(self, mocker: MockerFixture) -> None:
+        """Test package version fallback when metadata is unavailable."""
+        import importlib
+        from importlib.metadata import PackageNotFoundError
+
+        import pr2md.github_client as github_client_module
+
+        mocker.patch(
+            "importlib.metadata.version",
+            side_effect=PackageNotFoundError("PR2MD"),
+        )
+        importlib.reload(github_client_module)
+        assert github_client_module._PACKAGE_VERSION == "unknown"
+        mocker.stopall()
+        importlib.reload(github_client_module)
+
 
 class TestGitHubAPIError:
     """Tests for GitHubAPIError formatting."""
