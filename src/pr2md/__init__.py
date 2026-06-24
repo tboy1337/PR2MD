@@ -1,6 +1,6 @@
-"""PR2MD - Pull Request to Markdown Exporter.
+"""PR2MD - GitHub Pull Request and Issue to Markdown Exporter.
 
-A tool for extracting GitHub Pull Request data and formatting it as Markdown.
+A tool for extracting GitHub Pull Request and Issue data and formatting it as Markdown.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -22,7 +22,7 @@ from pr2md.pr_extractor import GitHubPRExtractor
 try:
     __version__ = version("PR2MD")
 except PackageNotFoundError:
-    __version__ = "1.0.12"
+    __version__ = "1.0.14"
 
 __all__ = [
     "Comment",

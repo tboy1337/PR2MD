@@ -4,16 +4,6 @@ from typing import Any
 
 import pytest
 
-from pr2md.github_client import GitHubClient
-
-
-@pytest.fixture
-def mock_github_client(mocker: Any) -> GitHubClient:
-    """Provide a GitHubClient with a mocked session."""
-    client = GitHubClient()
-    mocker.patch.object(client.session, "close")
-    return client
-
 
 @pytest.fixture
 def sample_pr_dict() -> dict[str, Any]:

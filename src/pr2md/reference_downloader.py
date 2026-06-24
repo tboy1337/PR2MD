@@ -46,6 +46,7 @@ class ReferenceDownloader:
         self.verbose = verbose
         self.parser = ReferenceParser(base_owner, base_repo)
         self.downloaded: set[GitHubReference] = set()
+        self.skipped_references: list[tuple[GitHubReference, str]] = []
         self.had_download_failures = False
         self._owns_client = client is None
         self._client = client or GitHubClient()
@@ -71,6 +72,30 @@ class ReferenceDownloader:
         """Close the underlying API client if owned by this downloader."""
         if self._owns_client:
             self._client.close()
+
+    def record_skipped_reference(self, reference: GitHubReference, reason: str) -> None:
+        """Record a reference that could not be downloaded."""
+        self.skipped_references.append((reference, reason))
+        self.had_download_failures = True
+
+    def log_skipped_summary(self) -> None:
+        """Log a summary of skipped references to stderr."""
+        if not self.skipped_references:
+            return
+        logger.error(
+            "Failed to download %d referenced item(s):",
+            len(self.skipped_references),
+        )
+        for reference, reason in self.skipped_references:
+            type_label = "PR" if reference.ref_type == "pr" else "Issue"
+            logger.error(
+                "  - %s %s/%s #%d: %s",
+                type_label,
+                reference.owner,
+                reference.repo,
+                reference.number,
+                reason,
+            )
 
     def generate_filename(
         self, ref_type: Literal["issue", "pr"], owner: str, repo: str, number: int
@@ -333,7 +358,9 @@ class ReferenceDownloader:
                 reference.owner, reference.repo, reference.number
             )
             if actual_type is None:
-                self.had_download_failures = True
+                self.record_skipped_reference(
+                    reference, "Could not determine issue or PR type (not found)"
+                )
                 return []
             ref_type = actual_type
             reference = GitHubReference(
@@ -356,7 +383,9 @@ class ReferenceDownloader:
             )
 
         if not markdown:
-            self.had_download_failures = True
+            self.record_skipped_reference(
+                reference, "Download failed (see logs for details)"
+            )
             return []
 
         filename = self.generate_filename(
@@ -368,7 +397,7 @@ class ReferenceDownloader:
             logger.info("Saved %s", filename)
         except (ValueError, OSError) as err:
             logger.error("Failed to save %s: %s", filename, err)
-            self.had_download_failures = True
+            self.record_skipped_reference(reference, f"Failed to save file: {err}")
             return []
 
         downloaded_files = [filename]

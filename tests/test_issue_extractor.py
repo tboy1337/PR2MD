@@ -1,10 +1,14 @@
 """Tests for GitHub issue extractor."""
 
+from typing import Any
+
 import pytest
 from pytest_mock import MockerFixture
 
 from pr2md.exceptions import GitHubAPIError
 from pr2md.issue_extractor import GitHubIssueExtractor
+
+# pylint: disable=protected-access  # testing private attributes
 
 
 class TestGitHubIssueExtractor:
@@ -18,33 +22,18 @@ class TestGitHubIssueExtractor:
         assert extractor.issue_number == 123
         assert extractor._client is not None
 
-    def test_fetch_issue_details(self, mocker: MockerFixture) -> None:
+    def test_fetch_issue_details(
+        self, mocker: MockerFixture, sample_issue_dict: dict[str, Any]
+    ) -> None:
         """Test fetching issue details."""
         extractor = GitHubIssueExtractor("owner", "repo", 123)
-        mock_data = {
-            "number": 123,
-            "title": "Test Issue",
-            "body": "This is a test issue",
-            "state": "open",
-            "user": {
-                "login": "testuser",
-                "id": 1,
-                "avatar_url": "https://example.com/avatar.jpg",
-                "html_url": "https://github.com/testuser",
-            },
-            "created_at": "2025-01-01T00:00:00Z",
-            "updated_at": "2025-01-02T00:00:00Z",
-            "closed_at": None,
-            "html_url": "https://github.com/owner/repo/issues/123",
-            "labels": [],
-        }
-        mocker.patch.object(extractor._client, "get", return_value=mock_data)
+        mocker.patch.object(extractor._client, "get", return_value=sample_issue_dict)
 
         issue = extractor.fetch_issue_details()
-        assert issue.number == 123
+        assert issue.number == 456
         assert issue.title == "Test Issue"
         assert issue.state == "open"
-        assert issue.user.login == "testuser"
+        assert issue.user.login == "author"
 
     def test_fetch_comments(self, mocker: MockerFixture) -> None:
         """Test fetching issue comments."""

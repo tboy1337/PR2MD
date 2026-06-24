@@ -141,9 +141,7 @@ class TestReferenceParser:
 
     def test_parse_url_sets_from_url(self, parser: ReferenceParser) -> None:
         """Test URL references are marked as from_url."""
-        refs = parser.parse_references(
-            "See https://github.com/owner/repo/pull/42"
-        )
+        refs = parser.parse_references("See https://github.com/owner/repo/pull/42")
         ref = list(refs)[0]
         assert ref.from_url is True
 
@@ -155,9 +153,7 @@ class TestReferenceParser:
 
     def test_skips_invalid_owner_in_url(self, parser: ReferenceParser) -> None:
         """Test invalid owner names in URLs are skipped."""
-        refs = parser.parse_references(
-            "See https://github.com/bad!owner/repo/pull/1"
-        )
+        refs = parser.parse_references("See https://github.com/bad!owner/repo/pull/1")
         assert len(refs) == 0
 
     def test_parse_repo_with_dots(self, parser: ReferenceParser) -> None:

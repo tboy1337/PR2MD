@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from pr2md.validation import validate_owner, validate_repo
+from pr2md.validation import validate_issue_number, validate_owner, validate_repo
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,6 @@ class GitHubReference:
     repo: str
     number: int
     from_url: bool = False
-
-    def __hash__(self) -> int:
-        """Make GitHubReference hashable for use in sets."""
-        return hash((self.ref_type, self.owner, self.repo, self.number))
 
 
 class ReferenceParser:
@@ -95,8 +91,11 @@ class ReferenceParser:
         try:
             validate_owner(owner)
             validate_repo(repo)
+            validate_issue_number(number)
         except ValueError as err:
-            logger.debug("Skipping invalid reference %s/%s #%d: %s", owner, repo, number, err)
+            logger.debug(
+                "Skipping invalid reference %s/%s #%d: %s", owner, repo, number, err
+            )
             return None
         return GitHubReference(
             ref_type=ref_type,
@@ -145,7 +144,9 @@ class ReferenceParser:
             )
             if reference is not None:
                 references.add(reference)
-                logger.debug("Found cross-repo reference: %s/%s #%d", owner, repo, number)
+                logger.debug(
+                    "Found cross-repo reference: %s/%s #%d", owner, repo, number
+                )
 
         return references
 

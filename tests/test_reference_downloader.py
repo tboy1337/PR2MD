@@ -11,6 +11,8 @@ from pr2md.models import Comment, Issue, PullRequest, User
 from pr2md.reference_downloader import ReferenceDownloader
 from pr2md.reference_parser import GitHubReference
 
+# pylint: disable=protected-access,too-many-public-methods
+
 
 class TestReferenceDownloader:
     """Tests for ReferenceDownloader class."""
@@ -342,9 +344,7 @@ class TestReferenceDownloader:
         assert "PR-1.md" in files
         assert "Issue-2.md" in files
 
-    def test_download_reference_recursive(
-        self, mocker: MockerFixture, sample_user: User
-    ) -> None:
+    def test_download_reference_recursive(self, mocker: MockerFixture) -> None:
         """Test recursive reference download."""
         downloader = ReferenceDownloader("owner", "repo", max_depth=2)
         child_ref = GitHubReference(
@@ -386,7 +386,42 @@ class TestReferenceDownloader:
         )
 
         files = downloader.download_reference(ref, current_depth=1)
-        assert files == []
+        assert not files
+        assert len(downloader.skipped_references) == 1
+
+    def test_download_reference_type_not_found_records_skip(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test skipped reference recorded when type cannot be determined."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=2)
+        ref = GitHubReference(
+            ref_type="pr",
+            owner="owner",
+            repo="repo",
+            number=1,
+            from_url=False,
+        )
+        mocker.patch.object(downloader, "determine_ref_type", return_value=None)
+
+        files = downloader.download_reference(ref, current_depth=1)
+        assert not files
+        assert downloader.had_download_failures is True
+        assert len(downloader.skipped_references) == 1
+
+    def test_download_pr_github_api_error(self, mocker: MockerFixture) -> None:
+        """Test PR download handles GitHubAPIError."""
+        downloader = ReferenceDownloader("owner", "repo")
+        mock_extractor = MagicMock()
+        mock_extractor.extract_all.side_effect = GitHubAPIError("not found")
+        mock_extractor.__enter__.return_value = mock_extractor
+        mocker.patch(
+            "pr2md.reference_downloader.GitHubPRExtractor",
+            return_value=mock_extractor,
+        )
+
+        markdown, refs = downloader.download_pr("owner", "repo", 1)
+        assert markdown == ""
+        assert refs is None
 
     def test_context_manager_closes_client(self, mocker: MockerFixture) -> None:
         """Test that context manager closes the owned client."""

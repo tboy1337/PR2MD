@@ -20,3 +20,7 @@ isort
 
 # Type Stubs
 types-requests
+
+# Security
+bandit
+safety

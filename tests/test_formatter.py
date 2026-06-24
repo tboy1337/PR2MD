@@ -1,8 +1,5 @@
 """Tests for Markdown formatter."""
 
-# pylint: disable=redefined-outer-name  # pytest fixtures
-# pylint: disable=protected-access  # testing private methods
-
 from datetime import datetime, timezone
 
 import pytest
@@ -11,6 +8,10 @@ from hypothesis import strategies as st
 
 from pr2md.formatter import MarkdownFormatter
 from pr2md.models import Comment, Issue, Label, PullRequest, Review, ReviewComment, User
+from pr2md.reference_parser import GitHubReference
+
+# pylint: disable=redefined-outer-name  # pytest fixtures
+# pylint: disable=protected-access  # testing private methods
 
 
 @pytest.fixture
@@ -209,9 +210,7 @@ class TestMarkdownFormatter:
         assert "superseded by a later" in formatted
         assert "✅ **APPROVED** review" in formatted
 
-    def test_format_reviews_multiple_reviewers_no_progression(
-        self, sample_user: User
-    ) -> None:
+    def test_format_reviews_multi_reviewers(self, sample_user: User) -> None:
         """Test review formatting with different reviewers (no progression)."""
         user2 = User(
             login="reviewer2",
@@ -379,10 +378,18 @@ class TestMarkdownFormatter:
         assert "Approved" in formatted
         assert "Pending" in formatted
 
-    def test_is_comment_resolved(self, sample_review_comment: ReviewComment) -> None:
-        """Test resolved comment detection."""
-        # Currently always returns False due to API limitations
-        assert MarkdownFormatter._is_comment_resolved(sample_review_comment) is False
+    def test_format_reference_download_summary(
+        self,
+    ) -> None:
+        """Test reference download summary formatting."""
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=42)
+        summary = MarkdownFormatter.format_reference_download_summary(
+            [(ref, "not found")]
+        )
+        assert "## Reference Download Summary" in summary
+        assert "owner/repo#42" in summary
+        assert "not found" in summary
+        assert MarkdownFormatter.format_reference_download_summary([]) == ""
 
     def test_format_pr_complete(
         self,

@@ -40,3 +40,24 @@ class TestWriteTextAtomic:
 
         assert not temp_path.exists()
         assert not target.exists()
+
+    def test_cleans_up_temp_file_on_replace_failure(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """Test temp file is removed when atomic replace fails."""
+        target = tmp_path / "output.md"
+        temp_path = target.with_suffix(target.suffix + ".tmp")
+        original_replace = Path.replace
+
+        def failing_replace(self: Path, target_path: Path) -> Path:
+            if self == temp_path:
+                raise OSError("replace failed")
+            return original_replace(self, target_path)
+
+        mocker.patch.object(Path, "replace", failing_replace)
+
+        with pytest.raises(OSError, match="replace failed"):
+            write_text_atomic(target, "content")
+
+        assert not temp_path.exists()
+        assert not target.exists()

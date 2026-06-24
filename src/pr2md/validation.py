@@ -46,8 +46,7 @@ def validate_issue_number(number: int) -> None:
         raise ValueError(f"Invalid number: {number} must be positive")
     if number > _MAX_ISSUE_NUMBER:
         raise ValueError(
-            f"Invalid number: {number} exceeds maximum "
-            f"{_MAX_ISSUE_NUMBER}"
+            f"Invalid number: {number} exceeds maximum " f"{_MAX_ISSUE_NUMBER}"
         )
 
 

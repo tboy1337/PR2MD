@@ -1,9 +1,13 @@
 """Shared GitHub REST API client."""
 
+import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
+from types import TracebackType
 from typing import Any, Literal, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -11,12 +15,16 @@ from pr2md.exceptions import GitHubAPIError
 
 logger = logging.getLogger(__name__)
 
+# Transient server errors: bounded retries with exponential backoff.
 _RETRYABLE_STATUS_CODES = {502, 503, 504}
 _MAX_RETRIES = 3
+# Per-request socket read timeout in seconds.
 _REQUEST_TIMEOUT = 30
+# Items per page when paginating list endpoints.
 _PER_PAGE = 100
-_MAX_PAGES = 50
 _MAX_ERROR_BODY_LENGTH = 500
+_ALLOWED_API_HOST = "api.github.com"
+_RATE_LIMIT_REMAINING_WARN_THRESHOLD = 10
 
 
 def _parse_next_link(link_header: Optional[str]) -> Optional[str]:
@@ -30,6 +38,61 @@ def _parse_next_link(link_header: Optional[str]) -> Optional[str]:
             if match:
                 return match.group(1)
     return None
+
+
+def _is_allowed_github_api_url(url: str) -> bool:
+    """Return True if url targets the public GitHub REST API host."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.netloc == _ALLOWED_API_HOST
+
+
+def _is_rate_limited(response: requests.Response) -> bool:
+    """Return True when the response indicates an API rate limit."""
+    if response.status_code == 429:
+        return True
+    if response.status_code == 403 and "rate limit" in response.text.lower():
+        return True
+    return False
+
+
+def _rate_limit_wait_seconds(response: requests.Response) -> float:
+    """Compute how long to wait before retrying after a rate-limit response."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return max(float(retry_after), 1.0)
+        except ValueError:
+            pass
+
+    reset_header = response.headers.get("X-RateLimit-Reset")
+    if reset_header is not None:
+        try:
+            reset_at = datetime.fromtimestamp(int(reset_header), tz=timezone.utc)
+            wait = (reset_at - datetime.now(timezone.utc)).total_seconds()
+            return max(wait, 1.0)
+        except (ValueError, OSError):
+            pass
+
+    return 60.0
+
+
+def _log_rate_limit_headers(response: requests.Response) -> None:
+    """Log rate-limit header values for observability."""
+    remaining = response.headers.get("X-RateLimit-Remaining")
+    reset = response.headers.get("X-RateLimit-Reset")
+    if remaining is not None:
+        logger.debug("X-RateLimit-Remaining: %s", remaining)
+        try:
+            if int(remaining) < _RATE_LIMIT_REMAINING_WARN_THRESHOLD:
+                logger.info(
+                    "GitHub API rate limit nearly exhausted (%s remaining); "
+                    "waits may occur",
+                    remaining,
+                )
+        except ValueError:
+            pass
+    if reset is not None:
+        logger.debug("X-RateLimit-Reset: %s", reset)
 
 
 class GitHubClient:
@@ -52,7 +115,7 @@ class GitHubClient:
         self,
         exc_type: Optional[type[BaseException]],
         exc_val: Optional[BaseException],
-        exc_tb: Optional[object],
+        exc_tb: Optional[TracebackType],
     ) -> None:
         self.close()
 
@@ -91,7 +154,7 @@ class GitHubClient:
 
         if accept and "diff" in accept:
             return str(response.text)
-        return response.json()
+        return self._parse_json_response(response, url)
 
     def get_paginated(self, endpoint: str) -> list[Any]:
         """
@@ -104,30 +167,33 @@ class GitHubClient:
             Combined list of items from all pages
         """
         separator = "&" if "?" in endpoint else "?"
-        url: Optional[str] = (
-            f"{self.base_url}{endpoint}{separator}per_page={_PER_PAGE}"
-        )
+        url: Optional[str] = f"{self.base_url}{endpoint}{separator}per_page={_PER_PAGE}"
         items: list[Any] = []
-        page_count = 0
 
         while url:
-            page_count += 1
-            if page_count > _MAX_PAGES:
-                logger.warning(
-                    "Pagination truncated at %d pages for %s", _MAX_PAGES, endpoint
+            if not _is_allowed_github_api_url(url):
+                raise GitHubAPIError(
+                    f"Pagination URL rejected (not GitHub API): {url}",
+                    url=url,
                 )
-                break
             logger.debug("Fetching paginated URL %s", url)
             response = self._request_with_retries(url)
             self._raise_for_status(response, url)
 
-            data = response.json()
+            data = self._parse_json_response(response, url)
             if not isinstance(data, list):
                 raise GitHubAPIError(
-                    f"Expected paginated list from {endpoint}, got {type(data)}"
+                    f"Expected paginated list from {endpoint}, got {type(data)}",
+                    url=url,
                 )
             items.extend(data)
-            url = _parse_next_link(response.headers.get("Link"))
+            next_url = _parse_next_link(response.headers.get("Link"))
+            if next_url is not None and not _is_allowed_github_api_url(next_url):
+                raise GitHubAPIError(
+                    f"Pagination URL rejected (not GitHub API): {next_url}",
+                    url=next_url,
+                )
+            url = next_url
 
         return items
 
@@ -151,6 +217,16 @@ class GitHubClient:
             return "pr"
         return "issue"
 
+    def _parse_json_response(self, response: requests.Response, url: str) -> Any:
+        try:
+            return response.json()
+        except json.JSONDecodeError as err:
+            raise GitHubAPIError(
+                f"Invalid JSON response from {url}: {err}",
+                status_code=response.status_code,
+                url=url,
+            ) from err
+
     def _request_with_retries(
         self,
         url: str,
@@ -158,14 +234,25 @@ class GitHubClient:
         headers: Optional[dict[str, str]] = None,
         params: Optional[dict[str, Any]] = None,
     ) -> requests.Response:
+        if not _is_allowed_github_api_url(url):
+            raise GitHubAPIError(
+                f"Request URL rejected (not GitHub API): {url}",
+                url=url,
+            )
+
         merged_headers = dict(self.session.headers)
         if headers:
             merged_headers.update(headers)
 
-        last_error: Optional[Exception] = None
-        for attempt in range(_MAX_RETRIES):
+        transient_attempt = 0
+
+        while True:
             try:
-                logger.debug("Making request to %s (attempt %d)", url, attempt + 1)
+                logger.debug(
+                    "Making request to %s (transient attempt %d)",
+                    url,
+                    transient_attempt + 1,
+                )
                 response = self.session.get(
                     url,
                     headers=merged_headers,
@@ -173,44 +260,74 @@ class GitHubClient:
                     timeout=_REQUEST_TIMEOUT,
                 )
             except requests.RequestException as err:
-                last_error = err
-                if attempt < _MAX_RETRIES - 1:
-                    time.sleep(2**attempt)
+                if transient_attempt < _MAX_RETRIES - 1:
+                    time.sleep(2**transient_attempt)
+                    transient_attempt += 1
                     continue
                 raise GitHubAPIError(
-                    f"GitHub API request failed: {err}"
+                    f"GitHub API request failed: {err}",
+                    url=url,
                 ) from err
 
+            _log_rate_limit_headers(response)
+
+            if _is_rate_limited(response):
+                wait_seconds = _rate_limit_wait_seconds(response)
+                resume_at = datetime.now(timezone.utc).timestamp() + wait_seconds
+                resume_str = datetime.fromtimestamp(
+                    resume_at, tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S UTC")
+                logger.info(
+                    "Rate limited by GitHub API; waiting %.0fs (resuming ~%s)",
+                    wait_seconds,
+                    resume_str,
+                )
+                time.sleep(wait_seconds)
+                transient_attempt = 0
+                continue
+
             if response.status_code in _RETRYABLE_STATUS_CODES:
-                if attempt < _MAX_RETRIES - 1:
-                    time.sleep(2**attempt)
+                if transient_attempt < _MAX_RETRIES - 1:
+                    time.sleep(2**transient_attempt)
+                    transient_attempt += 1
                     continue
+
             return response
 
-        if last_error is not None:
-            raise GitHubAPIError(
-                f"GitHub API request failed: {last_error}"
-            ) from last_error
-        raise GitHubAPIError("GitHub API request failed after retries")
-
     def _raise_for_status(self, response: requests.Response, url: str) -> None:
-        if response.status_code == 404:
+        status = response.status_code
+        if status == 404:
             raise GitHubAPIError(
                 f"Resource not found: {url}. "
-                "Please check that the repository and resource number are correct."
+                "Please check that the repository and resource number are correct.",
+                status_code=status,
+                url=url,
             )
-        if response.status_code == 403:
-            if "rate limit" in response.text.lower():
+        if status == 401:
+            raise GitHubAPIError(
+                "GitHub API authentication required. "
+                "PR2MD uses the unauthenticated public API only.",
+                status_code=status,
+                url=url,
+            )
+        if status == 403:
+            if _is_rate_limited(response):
                 raise GitHubAPIError(
-                    "GitHub API rate limit exceeded. "
-                    "Please try again later or use authentication."
+                    "GitHub API rate limit exceeded unexpectedly.",
+                    status_code=status,
+                    url=url,
                 )
-            raise GitHubAPIError(f"Access forbidden: {url}")
-        if response.status_code != 200:
+            raise GitHubAPIError(
+                f"Access forbidden: {url}",
+                status_code=status,
+                url=url,
+            )
+        if status != 200:
             body = response.text
             if len(body) > _MAX_ERROR_BODY_LENGTH:
                 body = f"{body[:_MAX_ERROR_BODY_LENGTH]}... (truncated)"
             raise GitHubAPIError(
-                f"GitHub API request failed with status {response.status_code}: "
-                f"{body}"
+                f"GitHub API request failed with status {status}: {body}",
+                status_code=status,
+                url=url,
             )

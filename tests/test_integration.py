@@ -1,11 +1,12 @@
 """Integration tests with real GitHub API."""
 
-# pylint: disable=duplicate-code  # some duplication in test assertions is expected
-
 import pytest
 
 from pr2md.formatter import MarkdownFormatter
+from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.pr_extractor import GitHubPRExtractor
+
+# pylint: disable=duplicate-code  # some duplication in test assertions is expected
 
 
 @pytest.mark.integration
@@ -87,8 +88,6 @@ class TestIntegration:
     @pytest.mark.timeout(60)
     def test_extract_real_issue(self) -> None:
         """Test extracting a real issue from psf/requests."""
-        from pr2md.issue_extractor import GitHubIssueExtractor
-
         extractor = GitHubIssueExtractor("psf", "requests", 1)
         issue, comments = extractor.extract_all()
 
@@ -96,8 +95,6 @@ class TestIntegration:
         assert issue.title is not None
         assert len(issue.title) > 0
         assert isinstance(comments, list)
-
-        from pr2md.formatter import MarkdownFormatter
 
         markdown = MarkdownFormatter.format_issue(issue, comments)
         assert "# " in markdown

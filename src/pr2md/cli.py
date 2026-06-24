@@ -5,7 +5,8 @@ import json
 import logging
 import re
 import sys
-from typing import Optional
+from pathlib import Path
+from typing import Callable, NamedTuple, Optional, cast
 
 import requests
 
@@ -16,6 +17,7 @@ from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
 from pr2md.reference_downloader import ReferenceDownloader
+from pr2md.reference_parser import GitHubReference
 from pr2md.validation import (
     validate_depth,
     validate_issue_number,
@@ -26,6 +28,20 @@ from pr2md.validation import (
 
 # Sentinel value for stdout output
 _STDOUT_SENTINEL = "__STDOUT__"
+
+
+class ParsedArguments(NamedTuple):
+    """Parsed CLI arguments for a PR or issue export."""
+
+    owner: str
+    repo: str
+    ref_type: str
+    number: int
+    output_path: Optional[str]
+    verbose: bool
+    depth: int
+    no_references: bool
+    strict: bool
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -145,9 +161,45 @@ Examples:
     return parser
 
 
-def parse_arguments(
-    parser: argparse.ArgumentParser,
-) -> tuple[str, str, str, int, Optional[str], bool, int, bool, bool]:
+def _parse_identifier_from_args(pr_args: list[str]) -> tuple[str, str, str, int]:
+    """Parse owner, repo, ref type, and number from CLI identifier arguments."""
+    if len(pr_args) == 1:
+        return parse_pr_url(str(pr_args[0]))
+    if len(pr_args) == 4:
+        owner = str(pr_args[0])
+        repo = str(pr_args[1])
+        ref_type_arg = str(pr_args[2]).lower()
+        if ref_type_arg not in ("pr", "issue"):
+            raise ValueError(
+                f"Invalid reference type: {ref_type_arg}. Must be 'pr' or 'issue'"
+            )
+        return owner, repo, ref_type_arg, int(pr_args[3])
+    raise ValueError(
+        "Invalid arguments. Provide either a GitHub URL or "
+        "owner repo pr/issue number"
+    )
+
+
+def _output_path_from_args(
+    args: argparse.Namespace,
+    ref_type: str,
+    number: int,
+) -> Optional[str]:
+    """Resolve the output path from parsed CLI arguments."""
+    if args.output is None:
+        type_str = "PR" if ref_type == "pr" else "Issue"
+        return f"{type_str}-{number}.md"
+    if args.output == _STDOUT_SENTINEL:
+        return None
+    try:
+        return validate_output_path(str(args.output))
+    except ValueError as err:
+        logger = logging.getLogger(__name__)
+        logger.error("%s", err)
+        sys.exit(1)
+
+
+def parse_arguments(parser: argparse.ArgumentParser) -> ParsedArguments:
     """
     Parse command-line arguments and extract PR/Issue details.
 
@@ -161,35 +213,10 @@ def parse_arguments(
     args = parser.parse_args()
     logger = logging.getLogger(__name__)
 
-    # Initialize variables to satisfy pylint - they will be assigned in all code paths
-    owner: str = ""
-    repo: str = ""
-    ref_type: str = ""
-    number: int = 0
-
-    # Parse PR/Issue identifier
     try:
-        pr_args: list[str] = list(args.pr_identifier)
-        if len(pr_args) == 1:
-            # URL format
-            owner, repo, ref_type, number = parse_pr_url(str(pr_args[0]))
-        elif len(pr_args) == 4:
-            # owner repo pr/issue number format
-            owner = str(pr_args[0])
-            repo = str(pr_args[1])
-            ref_type_arg = str(pr_args[2]).lower()
-            if ref_type_arg not in ("pr", "issue"):
-                parser.error(
-                    f"Invalid reference type: {ref_type_arg}. Must be 'pr' or 'issue'"
-                )
-            ref_type = ref_type_arg
-            number = int(pr_args[3])
-        else:
-            parser.error(
-                "Invalid arguments. Provide either a GitHub URL or "
-                "owner repo pr/issue number"
-            )
-
+        owner, repo, ref_type, number = _parse_identifier_from_args(
+            list(args.pr_identifier)
+        )
         validate_owner(owner)
         validate_repo(repo)
         validate_issue_number(number)
@@ -197,26 +224,11 @@ def parse_arguments(
         logger.error("Error parsing identifier: %s", err)
         sys.exit(1)
 
-    # Handle output path: None -> default filename,
-    # sentinel -> stdout, else -> provided path
-    if args.output is None:
-        # No -o specified, use default filename
-        type_str = "PR" if ref_type == "pr" else "Issue"
-        output_path = f"{type_str}-{number}.md"
-    elif args.output == _STDOUT_SENTINEL:
-        # -o without filename, use stdout (None value)
-        output_path = None
-    else:
-        try:
-            output_path = validate_output_path(str(args.output))
-        except ValueError as err:
-            logger.error("%s", err)
-            sys.exit(1)
-
-    verbose: bool = bool(args.verbose)
-    depth: int = int(args.depth)
-    no_references: bool = bool(args.no_references)
-    strict: bool = bool(args.strict)
+    output_path = _output_path_from_args(args, ref_type, number)
+    verbose = bool(args.verbose)
+    depth = int(args.depth)
+    no_references = bool(args.no_references)
+    strict = bool(args.strict)
 
     try:
         validate_depth(depth)
@@ -224,13 +236,60 @@ def parse_arguments(
         logger.error("%s", err)
         sys.exit(1)
 
-    return owner, repo, ref_type, number, output_path, verbose, depth, no_references, strict
+    return ParsedArguments(
+        owner=owner,
+        repo=repo,
+        ref_type=ref_type,
+        number=number,
+        output_path=output_path,
+        verbose=verbose,
+        depth=depth,
+        no_references=no_references,
+        strict=strict,
+    )
 
 
 def _log_processing_error(logger: logging.Logger, message: str, verbose: bool) -> None:
     logger.error(message)
     if verbose:
         logger.exception("Full traceback:")
+
+
+def _extract_and_format(
+    extract_fn: Callable[[], object],
+    format_fn: Callable[[object], str],
+    *,
+    resource_label: str,
+    verbose: bool,
+) -> tuple[str, bool, Optional[object]]:
+    """Extract data via extract_fn, format via format_fn, with shared error handling."""
+    logger = logging.getLogger(__name__)
+
+    try:
+        data = extract_fn()
+    except GitHubAPIError as err:
+        logger.error("GitHub API error: %s", err)
+        return "", False, None
+    except (
+        requests.RequestException,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+    ) as err:
+        _log_processing_error(
+            logger, f"Unexpected error extracting {resource_label}: {err}", verbose
+        )
+        return "", False, None
+
+    try:
+        markdown = format_fn(data)
+        return markdown, True, data
+    except (KeyError, ValueError, TypeError) as err:
+        _log_processing_error(
+            logger, f"Error formatting {resource_label}: {err}", verbose
+        )
+        return "", False, None
 
 
 def extract_pr_data(
@@ -250,36 +309,35 @@ def extract_pr_data(
     Returns:
         Tuple of (markdown, success, pull_request, comments, reviews, review_comments)
     """
-    logger = logging.getLogger(__name__)
 
-    try:
+    def extract_fn() -> (
+        tuple[PullRequest, list[Comment], list[Review], list[ReviewComment], str]
+    ):
         with GitHubPRExtractor(owner, repo, pr_number) as extractor:
-            pull_request, comments, reviews, review_comments, diff = (
-                extractor.extract_all()
-            )
-    except GitHubAPIError as err:
-        logger.error("GitHub API error: %s", err)
-        return "", False, None, [], [], []
-    except (
-        requests.RequestException,
-        OSError,
-        json.JSONDecodeError,
-        KeyError,
-        ValueError,
-    ) as err:
-        _log_processing_error(
-            logger, f"Unexpected error extracting PR data: {err}", verbose
-        )
-        return "", False, None, [], [], []
+            return extractor.extract_all()
 
-    try:
-        markdown = MarkdownFormatter.format_pr(
+    def format_fn(
+        data: tuple[PullRequest, list[Comment], list[Review], list[ReviewComment], str],
+    ) -> str:
+        pull_request, comments, reviews, review_comments, diff = data
+        return MarkdownFormatter.format_pr(
             pull_request, comments, reviews, review_comments, diff
         )
-        return markdown, True, pull_request, comments, reviews, review_comments
-    except (KeyError, ValueError, TypeError) as err:
-        _log_processing_error(logger, f"Error formatting PR data: {err}", verbose)
+
+    markdown, success, data = _extract_and_format(
+        extract_fn,
+        cast(Callable[[object], str], format_fn),
+        resource_label="PR data",
+        verbose=verbose,
+    )
+    if not success or data is None:
         return "", False, None, [], [], []
+
+    pull_request, comments, reviews, review_comments, _diff = cast(
+        tuple[PullRequest, list[Comment], list[Review], list[ReviewComment], str],
+        data,
+    )
+    return markdown, True, pull_request, comments, reviews, review_comments
 
 
 def extract_issue_data(
@@ -297,32 +355,49 @@ def extract_issue_data(
     Returns:
         Tuple of (markdown, success, issue, comments)
     """
-    logger = logging.getLogger(__name__)
 
-    try:
+    def extract_fn() -> tuple[Issue, list[Comment]]:
         with GitHubIssueExtractor(owner, repo, issue_number) as extractor:
-            issue, comments = extractor.extract_all()
-    except GitHubAPIError as err:
-        logger.error("GitHub API error: %s", err)
-        return "", False, None, []
-    except (
-        requests.RequestException,
-        OSError,
-        json.JSONDecodeError,
-        KeyError,
-        ValueError,
-    ) as err:
-        _log_processing_error(
-            logger, f"Unexpected error extracting issue data: {err}", verbose
-        )
+            return extractor.extract_all()
+
+    def format_fn(data: tuple[Issue, list[Comment]]) -> str:
+        issue, comments = data
+        return MarkdownFormatter.format_issue(issue, comments)
+
+    markdown, success, data = _extract_and_format(
+        extract_fn,
+        cast(Callable[[object], str], format_fn),
+        resource_label="issue data",
+        verbose=verbose,
+    )
+    if not success or data is None:
         return "", False, None, []
 
+    issue, comments = cast(tuple[Issue, list[Comment]], data)
+    return markdown, True, issue, comments
+
+
+def append_reference_summary(
+    output_path: str,
+    skipped: list[tuple[GitHubReference, str]],
+) -> bool:
+    """Append a reference download summary section to an existing output file."""
+    if not skipped:
+        return True
+
+    logger = logging.getLogger(__name__)
+    summary = MarkdownFormatter.format_reference_download_summary(skipped)
+    if not summary:
+        return True
+
     try:
-        markdown = MarkdownFormatter.format_issue(issue, comments)
-        return markdown, True, issue, comments
-    except (KeyError, ValueError, TypeError) as err:
-        _log_processing_error(logger, f"Error formatting issue data: {err}", verbose)
-        return "", False, None, []
+        existing = Path(output_path).read_text(encoding="utf-8")
+        write_text_atomic(output_path, f"{existing}\n\n{summary}")
+        logger.info("Appended reference download summary to %s", output_path)
+        return True
+    except OSError as err:
+        logger.error("Failed to append reference summary to %s: %s", output_path, err)
+        return False
 
 
 def write_output(markdown: str, output_path: Optional[str], verbose: bool) -> bool:
@@ -365,19 +440,19 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     comments: list[Comment],
     reviews: list[Review],
     review_comments: list[ReviewComment],
-) -> bool:
+) -> tuple[bool, list[tuple[GitHubReference, str]]]:
     """
     Download referenced PRs and issues when auto-naming is used.
 
     Returns:
-        True if all reference downloads succeeded (or none were attempted)
+        Tuple of (all succeeded, list of skipped references with reasons)
     """
     logger = logging.getLogger(__name__)
     type_str = "PR" if ref_type == "pr" else "Issue"
     using_auto_naming = output_path == f"{type_str}-{number}.md"
 
     if not using_auto_naming or no_references or not (pull_request or issue):
-        return True
+        return True, []
 
     logger.info("Scanning for referenced PRs and issues...")
 
@@ -389,12 +464,13 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
                 pull_request, comments, reviews, review_comments
             )
         else:
-            assert issue is not None
+            if issue is None:
+                return True, []
             references = downloader.extract_references_from_issue(issue, comments)
 
         if not references:
             logger.info("No references found in %s", type_str)
-            return True
+            return True, []
 
         logger.info("Found %d references to download", len(references))
         downloaded_files = downloader.download_all_references(references)
@@ -408,62 +484,92 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
         else:
             logger.info("No references were successfully downloaded")
 
-        return not downloader.had_download_failures
+        if downloader.skipped_references:
+            downloader.log_skipped_summary()
+
+        return not downloader.had_download_failures, downloader.skipped_references
+
+
+def _run_primary_extraction(
+    ref_type: str,
+    owner: str,
+    repo: str,
+    number: int,
+    verbose: bool,
+) -> tuple[
+    str,
+    bool,
+    Optional[PullRequest],
+    Optional[Issue],
+    list[Comment],
+    list[Review],
+    list[ReviewComment],
+]:
+    """Extract and format the target PR or issue."""
+    if ref_type == "pr":
+        markdown, success, pull_request, comments, reviews, review_comments = (
+            extract_pr_data(owner, repo, number, verbose)
+        )
+        return markdown, success, pull_request, None, comments, reviews, review_comments
+
+    markdown, success, issue, comments = extract_issue_data(
+        owner, repo, number, verbose
+    )
+    return markdown, success, None, issue, comments, [], []
 
 
 def main() -> None:
     """Main entry point for the CLI."""
     parser = create_parser()
     setup_logging(False)
-    (
-        owner,
-        repo,
-        ref_type,
-        number,
-        output_path,
-        verbose,
-        depth,
-        no_references,
-        strict,
-    ) = parse_arguments(parser)
+    cli_args = parse_arguments(parser)
 
-    if verbose:
+    if cli_args.verbose:
         setup_logging(True)
     logger = logging.getLogger(__name__)
 
-    type_str = "PR" if ref_type == "pr" else "Issue"
-    logger.info("Extracting %s %s/%s #%d", type_str, owner, repo, number)
+    type_str = "PR" if cli_args.ref_type == "pr" else "Issue"
+    logger.info(
+        "Extracting %s %s/%s #%d",
+        type_str,
+        cli_args.owner,
+        cli_args.repo,
+        cli_args.number,
+    )
 
-    if ref_type == "pr":
-        markdown, success, pull_request, comments, reviews, review_comments = (
-            extract_pr_data(owner, repo, number, verbose)
-        )
-        issue = None
-    else:
-        markdown, success, issue, comments = extract_issue_data(
-            owner, repo, number, verbose
-        )
-        pull_request = None
-        reviews = []
-        review_comments = []
+    (
+        markdown,
+        success,
+        pull_request,
+        issue,
+        comments,
+        reviews,
+        review_comments,
+    ) = _run_primary_extraction(
+        cli_args.ref_type,
+        cli_args.owner,
+        cli_args.repo,
+        cli_args.number,
+        cli_args.verbose,
+    )
 
     if not success:
         sys.exit(1)
 
-    if not write_output(markdown, output_path, verbose):
+    if not write_output(markdown, cli_args.output_path, cli_args.verbose):
         sys.exit(1)
 
     logger.info("Extraction completed successfully")
 
-    references_ok = download_references_if_needed(
-        owner,
-        repo,
-        ref_type,
-        number,
-        output_path,
-        depth,
-        no_references,
-        verbose,
+    references_ok, skipped_references = download_references_if_needed(
+        cli_args.owner,
+        cli_args.repo,
+        cli_args.ref_type,
+        cli_args.number,
+        cli_args.output_path,
+        cli_args.depth,
+        cli_args.no_references,
+        cli_args.verbose,
         pull_request,
         issue,
         comments,
@@ -471,7 +577,11 @@ def main() -> None:
         review_comments,
     )
 
-    if strict and not references_ok:
+    if skipped_references and cli_args.output_path:
+        if not append_reference_summary(cli_args.output_path, skipped_references):
+            sys.exit(1)
+
+    if cli_args.strict and not references_ok:
         sys.exit(2)
 
 

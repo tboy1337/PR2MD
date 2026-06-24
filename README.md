@@ -77,6 +77,7 @@ Extract a PR using its URL (automatically saves to `PR-123.md`):
 
 ```bash
 pr2md https://github.com/owner/repo/pull/123
+python -m pr2md https://github.com/owner/repo/pull/123
 ```
 
 Extract an Issue using its URL (automatically saves to `Issue-456.md`):
@@ -117,6 +118,7 @@ pr2md owner repo issue 456 --output
 Enable detailed logging for debugging:
 
 ```bash
+pr2md https://github.com/owner/repo/pull/123 -v
 pr2md https://github.com/owner/repo/pull/123 --verbose
 ```
 
@@ -229,17 +231,50 @@ pr2md tboy1337 PR2MD issue 10 -o issue-10-report.md
 The tool uses the GitHub REST API **without authentication**. GitHub imposes rate limits:
 
 - **Unauthenticated requests**: 60 requests per hour per IP address
-- **Authenticated requests**: 5,000 requests per hour (not supported by PR2MD yet)
+- **Authenticated requests**: 5,000 requests per hour (not supported by PR2MD)
 
-For typical single PR or issue exports, unauthenticated access is usually sufficient. Reference downloading with `--depth` greater than zero consumes additional API calls and can hit the limit sooner. If rate limited, the tool reports a clear error; wait for the limit to reset or reduce `--depth` and export fewer items at once.
+When the API returns a rate-limit response, PR2MD **waits and retries automatically** until the limit resets. Progress messages are logged at INFO level (for example, "Rate limited, waiting 45s…"). Massive PRs, issues, or reference chains may take a long time to complete on the unauthenticated API, but the run will finish without manual intervention.
 
-**Authentication is not implemented.** Private repositories are not supported. Token-based auth may be added in a future release.
+For typical single PR or issue exports, unauthenticated access is usually sufficient. Reference downloading with `--depth` greater than zero consumes additional API calls. Use `--no-references` or lower `--depth` to reduce API usage.
+
+**Authentication is not implemented by design.** Private repositories are not supported.
+
+## Data Completeness
+
+PR2MD does not silently truncate exports:
+
+- **Paginated data** (comments, reviews, review comments) is fetched until GitHub returns no further pages
+- **Full diffs** are always included for pull requests, regardless of size
+- **Primary exports** fail without writing a file when an unrecoverable API error occurs
+- **Reference downloads** that fail are listed in stderr and appended as a `## Reference Download Summary` section in the primary markdown file; use `--strict` to exit with code 2 when any reference fails
+
+## Development
+
+Install the package and development dependencies:
+
+```bash
+pip install -e .
+pip install -r requirements-dev.txt
+```
+
+Run the local verification script (formatting, type checks, lint, security scan, tests):
+
+```powershell
+.\scripts\verify.ps1
+```
+
+Unit tests run by default; integration tests (live GitHub API) are excluded:
+
+```bash
+pytest                  # unit tests only
+pytest -m integration   # live API smoke tests
+```
 
 ## Limitations
 
 - **Public repositories only** — no GitHub token or private-repo support
-- **Rate limited** — 60 API requests per hour without authentication; use `--no-references` or lower `--depth` to reduce usage
-- **Reference downloads** — partial failures are logged but do not change the exit code unless `--strict` is set
+- **Rate limited** — 60 API requests per hour without authentication; the tool waits and retries when limited
+- **Reference downloads** — failures are reported in the output file and stderr; use `--strict` for a non-zero exit code
 - Requires an internet connection to fetch data
 - Large PRs with extensive diffs may generate very large Markdown files
 - Custom output paths (`-o path`) must stay within the current working directory

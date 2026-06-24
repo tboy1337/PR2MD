@@ -1,13 +1,13 @@
 """Tests for GitHub API client."""
 
-# pylint: disable=protected-access
+import json
 
 import pytest
 import requests
 from pytest_mock import MockerFixture
 
 from pr2md.exceptions import GitHubAPIError
-from pr2md.github_client import GitHubClient, _MAX_PAGES, _parse_next_link
+from pr2md.github_client import GitHubClient, _parse_next_link
 
 
 class TestParseNextLink:
@@ -39,6 +39,7 @@ class TestGitHubClient:
         mock_response = mocker.Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"key": "value"}
+        mock_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
         assert client.get("/repos/o/r") == {"key": "value"}
@@ -50,9 +51,12 @@ class TestGitHubClient:
         mock_response = mocker.Mock()
         mock_response.status_code = 200
         mock_response.text = "diff content"
+        mock_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
-        result = client.get("/repos/o/r/pulls/1", accept="application/vnd.github.v3.diff")
+        result = client.get(
+            "/repos/o/r/pulls/1", accept="application/vnd.github.v3.diff"
+        )
         assert result == "diff content"
         client.close()
 
@@ -62,22 +66,32 @@ class TestGitHubClient:
         mock_response = mocker.Mock()
         mock_response.status_code = 404
         mock_response.text = "Not Found"
+        mock_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
         with pytest.raises(GitHubAPIError, match="Resource not found"):
             client.get("/missing")
         client.close()
 
-    def test_get_403_rate_limit(self, mocker: MockerFixture) -> None:
-        """Test rate limit handling."""
+    def test_get_403_rate_limit_retries(self, mocker: MockerFixture) -> None:
+        """Test rate limit response waits and retries until success."""
         client = GitHubClient()
-        mock_response = mocker.Mock()
-        mock_response.status_code = 403
-        mock_response.text = "API rate limit exceeded"
-        mocker.patch.object(client.session, "get", return_value=mock_response)
+        rate_limited = mocker.Mock()
+        rate_limited.status_code = 403
+        rate_limited.text = "API rate limit exceeded"
+        rate_limited.headers = {"Retry-After": "1"}
+        ok_response = mocker.Mock()
+        ok_response.status_code = 200
+        ok_response.json.return_value = {"ok": True}
+        ok_response.headers = {}
+        mocker.patch.object(
+            client.session,
+            "get",
+            side_effect=[rate_limited, ok_response],
+        )
+        mocker.patch("pr2md.github_client.time.sleep")
 
-        with pytest.raises(GitHubAPIError, match="rate limit"):
-            client.get("/repos/o/r")
+        assert client.get("/repos/o/r") == {"ok": True}
         client.close()
 
     def test_get_403_forbidden(self, mocker: MockerFixture) -> None:
@@ -86,6 +100,7 @@ class TestGitHubClient:
         mock_response = mocker.Mock()
         mock_response.status_code = 403
         mock_response.text = "Forbidden"
+        mock_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
         with pytest.raises(GitHubAPIError, match="Access forbidden"):
@@ -98,6 +113,7 @@ class TestGitHubClient:
         mock_response = mocker.Mock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
+        mock_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
         with pytest.raises(GitHubAPIError, match="request failed with status 500"):
@@ -110,9 +126,11 @@ class TestGitHubClient:
         fail_response = mocker.Mock()
         fail_response.status_code = 503
         fail_response.text = "Service Unavailable"
+        fail_response.headers = {}
         ok_response = mocker.Mock()
         ok_response.status_code = 200
         ok_response.json.return_value = {"ok": True}
+        ok_response.headers = {}
         mocker.patch.object(
             client.session,
             "get",
@@ -143,9 +161,7 @@ class TestGitHubClient:
         page1 = mocker.Mock()
         page1.status_code = 200
         page1.json.return_value = [{"id": 1}]
-        page1.headers = {
-            "Link": '<https://api.github.com/page2>; rel="next"'
-        }
+        page1.headers = {"Link": '<https://api.github.com/page2>; rel="next"'}
         page2 = mocker.Mock()
         page2.status_code = 200
         page2.json.return_value = [{"id": 2}]
@@ -210,6 +226,7 @@ class TestGitHubClient:
         fail_response = mocker.Mock()
         fail_response.status_code = 502
         fail_response.text = "Bad Gateway"
+        fail_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=fail_response)
         mocker.patch("pr2md.github_client.time.sleep")
 
@@ -217,24 +234,105 @@ class TestGitHubClient:
             client.get("/repos/o/r")
         client.close()
 
-    def test_get_paginated_page_cap(self, mocker: MockerFixture) -> None:
-        """Test pagination stops at the configured page cap."""
+    def test_get_paginated_fetches_all_pages(self, mocker: MockerFixture) -> None:
+        """Test pagination continues until no next link."""
         client = GitHubClient()
 
-        def make_page(page_id: int) -> object:
+        def make_page(page_id: int, *, has_next: bool) -> object:
             page = mocker.Mock()
             page.status_code = 200
             page.json.return_value = [{"id": page_id}]
-            page.headers = {
-                "Link": '<https://api.github.com/next>; rel="next"'
-            }
+            if has_next:
+                page.headers = {
+                    "Link": (f'<https://api.github.com/page{page_id + 1}>; rel="next"')
+                }
+            else:
+                page.headers = {}
             return page
 
-        pages = [make_page(i) for i in range(_MAX_PAGES + 5)]
+        pages = [make_page(i, has_next=True) for i in range(1, 6)]
+        pages.append(make_page(6, has_next=False))
         mocker.patch.object(client.session, "get", side_effect=pages)
 
         items = client.get_paginated("/repos/o/r/issues/1/comments")
-        assert len(items) == _MAX_PAGES
+        assert len(items) == 6
+        client.close()
+
+    def test_get_paginated_rejects_foreign_next_url(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test pagination rejects non-GitHub next URLs."""
+        client = GitHubClient()
+        page1 = mocker.Mock()
+        page1.status_code = 200
+        page1.json.return_value = [{"id": 1}]
+        page1.headers = {"Link": '<https://evil.example.com/page2>; rel="next"'}
+        mocker.patch.object(client.session, "get", return_value=page1)
+
+        with pytest.raises(GitHubAPIError, match="rejected"):
+            client.get_paginated("/repos/o/r/issues/1/comments")
+        client.close()
+
+    def test_get_401_error(self, mocker: MockerFixture) -> None:
+        """Test 401 handling."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_response.headers = {}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with pytest.raises(GitHubAPIError, match="authentication required"):
+            client.get("/repos/o/r")
+        assert mock_response.status_code == 401
+        client.close()
+
+    def test_get_json_decode_error(self, mocker: MockerFixture) -> None:
+        """Test invalid JSON response handling."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = json.JSONDecodeError("bad", "doc", 0)
+        mock_response.headers = {}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with pytest.raises(GitHubAPIError, match="Invalid JSON"):
+            client.get("/repos/o/r")
+        client.close()
+
+    def test_get_429_retries_until_success(self, mocker: MockerFixture) -> None:
+        """Test 429 waits and retries until success."""
+        client = GitHubClient()
+        rate_limited = mocker.Mock()
+        rate_limited.status_code = 429
+        rate_limited.text = "Too Many Requests"
+        rate_limited.headers = {"Retry-After": "2"}
+        ok_response = mocker.Mock()
+        ok_response.status_code = 200
+        ok_response.json.return_value = {"ok": True}
+        ok_response.headers = {}
+        mocker.patch.object(
+            client.session,
+            "get",
+            side_effect=[rate_limited, ok_response],
+        )
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        assert client.get("/repos/o/r") == {"ok": True}
+        client.close()
+
+    def test_api_error_has_status_code(self, mocker: MockerFixture) -> None:
+        """Test GitHubAPIError includes status code."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.headers = {}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with pytest.raises(GitHubAPIError) as exc_info:
+            client.get("/missing")
+        assert exc_info.value.status_code == 404
         client.close()
 
     def test_get_truncates_large_error_body(self, mocker: MockerFixture) -> None:
@@ -243,6 +341,7 @@ class TestGitHubClient:
         mock_response = mocker.Mock()
         mock_response.status_code = 500
         mock_response.text = "x" * 1000
+        mock_response.headers = {}
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
         with pytest.raises(GitHubAPIError) as exc_info:

@@ -131,13 +131,11 @@ class GitHubPRExtractor:
         """
         logger.info("Fetching diff")
         endpoint = f"/repos/{self.owner}/{self.repo}/pulls/{self.pr_number}"
-        diff: str = self._client.get(
-            endpoint, accept="application/vnd.github.v3.diff"
-        )
+        diff: str = self._client.get(endpoint, accept="application/vnd.github.v3.diff")
         diff_size = len(diff.encode("utf-8"))
         if diff_size > _DIFF_SIZE_WARNING_BYTES:
-            logger.warning(
-                "PR diff is large (%d bytes); this may use significant memory",
+            logger.info(
+                "PR diff is large (%d bytes); including full diff in export",
                 diff_size,
             )
         logger.info("Fetched diff (%d bytes)", len(diff))

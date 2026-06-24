@@ -1,12 +1,15 @@
 """Tests for PR extractor."""
 
-# pylint: disable=protected-access  # testing private attributes
+import logging
+from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
 
 from pr2md.exceptions import GitHubAPIError
 from pr2md.pr_extractor import GitHubPRExtractor
+
+# pylint: disable=protected-access  # testing private attributes
 
 
 class TestGitHubPRExtractor:
@@ -20,34 +23,12 @@ class TestGitHubPRExtractor:
         assert extractor.pr_number == 123
         assert extractor._client is not None
 
-    def test_fetch_pr_details(self, mocker: MockerFixture) -> None:
+    def test_fetch_pr_details(
+        self, mocker: MockerFixture, sample_pr_dict: dict[str, Any]
+    ) -> None:
         """Test fetching PR details."""
         extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_data = {
-            "number": 123,
-            "title": "Test PR",
-            "body": "Description",
-            "state": "open",
-            "user": {
-                "login": "author",
-                "id": 1,
-                "avatar_url": "https://example.com/avatar.jpg",
-                "html_url": "https://github.com/author",
-            },
-            "created_at": "2025-01-01T00:00:00Z",
-            "updated_at": "2025-01-02T00:00:00Z",
-            "closed_at": None,
-            "merged_at": None,
-            "merge_commit_sha": None,
-            "html_url": "https://github.com/owner/repo/pull/123",
-            "labels": [],
-            "additions": 10,
-            "deletions": 5,
-            "changed_files": 2,
-            "head": {"ref": "feature", "sha": "abc123"},
-            "base": {"ref": "main", "sha": "def456"},
-        }
-        mocker.patch.object(extractor._client, "get", return_value=mock_data)
+        mocker.patch.object(extractor._client, "get", return_value=sample_pr_dict)
 
         pull_request = extractor.fetch_pr_details()
         assert pull_request.number == 123
@@ -187,3 +168,17 @@ class TestGitHubPRExtractor:
 
         with pytest.raises(GitHubAPIError, match="Resource not found"):
             extractor.fetch_pr_details()
+
+    def test_fetch_diff_logs_large_diff(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test large diff triggers informational log but returns full content."""
+        extractor = GitHubPRExtractor("owner", "repo", 123)
+        large_diff = "x" * (6 * 1024 * 1024)
+        mocker.patch.object(extractor._client, "get", return_value=large_diff)
+
+        with caplog.at_level(logging.INFO, logger="pr2md.pr_extractor"):
+            diff = extractor.fetch_diff()
+
+        assert diff == large_diff
+        assert any("large" in record.message.lower() for record in caplog.records)

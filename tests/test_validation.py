@@ -72,7 +72,9 @@ class TestValidation:
         with pytest.raises(ValueError, match="invalid characters"):
             validate_github_name("bad/name", "repository", max_length=100)
 
-    def test_validate_output_path_within_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_validate_output_path_within_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test valid output path inside working directory."""
         monkeypatch.chdir(tmp_path)
         resolved = validate_output_path("report.md")
@@ -85,5 +87,7 @@ class TestValidation:
         work_dir = tmp_path / "work"
         work_dir.mkdir(parents=True)
         monkeypatch.chdir(work_dir)
-        with pytest.raises(ValueError, match="must be within the current working directory"):
+        with pytest.raises(
+            ValueError, match="must be within the current working directory"
+        ):
             validate_output_path("../../outside.md")
