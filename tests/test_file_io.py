@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pytest_mock import MockerFixture
 
-from pr2md.file_io import write_text_atomic
+from pr2md.file_io import append_text_atomic, log_overwrite_if_exists, write_text_atomic
 
 
 class TestWriteTextAtomic:
@@ -79,3 +79,56 @@ class TestWriteTextAtomic:
 
         assert len(temp_names) == 2
         assert temp_names[0] != temp_names[1]
+
+
+class TestAppendTextAtomic:
+    """Tests for append_text_atomic."""
+
+    def test_appends_to_existing_file(self, tmp_path: Path) -> None:
+        """Test appending content to an existing file."""
+        target = tmp_path / "output.md"
+        target.write_text("existing", encoding="utf-8")
+        append_text_atomic(target, "\n\nappended")
+        assert target.read_text(encoding="utf-8") == "existing\n\nappended"
+
+    def test_creates_file_when_missing(self, tmp_path: Path) -> None:
+        """Test append creates a new file when the target is missing."""
+        target = tmp_path / "output.md"
+        append_text_atomic(target, "new content")
+        assert target.read_text(encoding="utf-8") == "new content"
+
+    def test_custom_encoding(self, tmp_path: Path) -> None:
+        """Test append with a custom encoding."""
+        target = tmp_path / "output.md"
+        append_text_atomic(target, "café", encoding="utf-8")
+        assert target.read_text(encoding="utf-8") == "café"
+
+    def test_overwrites_via_atomic_replace(self, tmp_path: Path) -> None:
+        """Test append replaces the file atomically."""
+        target = tmp_path / "output.md"
+        write_text_atomic(target, "first")
+        append_text_atomic(target, "\nsecond")
+        assert target.read_text(encoding="utf-8") == "first\nsecond"
+
+
+class TestLogOverwriteIfExists:
+    """Tests for log_overwrite_if_exists."""
+
+    def test_logs_when_file_exists(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test overwrite warning is logged for existing files."""
+        target = tmp_path / "output.md"
+        target.write_text("existing", encoding="utf-8")
+        with caplog.at_level("INFO", logger="pr2md.file_io"):
+            log_overwrite_if_exists(target)
+        assert "Overwriting existing file" in caplog.text
+
+    def test_silent_when_file_missing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test no log when the target file does not exist."""
+        target = tmp_path / "missing.md"
+        with caplog.at_level("INFO", logger="pr2md.file_io"):
+            log_overwrite_if_exists(target)
+        assert "Overwriting existing file" not in caplog.text

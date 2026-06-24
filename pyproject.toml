@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PR2MD"
-version = "1.0.18"
+version = "1.0.19"
 description = "Pull Request Markdown Generator"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -30,6 +30,24 @@ classifiers = [
 
 [project.scripts]
 pr2md = "pr2md.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-timeout",
+    "pytest-xdist",
+    "pytest-mock",
+    "pytest-cov",
+    "hypothesis",
+    "pylint",
+    "mypy",
+    "autopep8",
+    "black",
+    "isort",
+    "types-requests",
+    "bandit",
+    "safety",
+]
 
 [project.urls]
 Homepage = "https://github.com/tboy1337/PR2MD"

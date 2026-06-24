@@ -531,17 +531,15 @@ class TestGitHubClient:
         mock_sleep.assert_not_called()
         client.close()
 
-    def test_raise_for_status_unexpected_rate_limit_on_403(
-        self, mocker: MockerFixture
-    ) -> None:
-        """Test defensive handling when rate limit slips past retry loop."""
+    def test_raise_for_status_forbidden_on_403(self, mocker: MockerFixture) -> None:
+        """Test 403 responses surface as access forbidden errors."""
         client = GitHubClient()
         mock_response = mocker.Mock()
         mock_response.status_code = 403
         mock_response.text = "API rate limit exceeded"
         mock_response.headers = {}
 
-        with pytest.raises(GitHubAPIError, match="rate limit exceeded unexpectedly"):
+        with pytest.raises(GitHubAPIError, match="Access forbidden"):
             client._raise_for_status(mock_response, "https://api.github.com/repos/o/r")
         client.close()
 
@@ -588,3 +586,42 @@ class TestGitHubAPIError:
         assert "failed" in text
         assert "status_code=404" in text
         assert "url=https://api.github.com/missing" in text
+
+    def test_str_message_only(self) -> None:
+        """Test string representation with message only."""
+        err = GitHubAPIError("failed")
+        assert str(err) == "failed"
+
+    def test_str_includes_url_without_status(self) -> None:
+        """Test string representation with URL but no status code."""
+        err = GitHubAPIError("failed", url="https://api.github.com/test")
+        text = str(err)
+        assert "failed" in text
+        assert "url=https://api.github.com/test" in text
+        assert "status_code" not in text
+
+
+class TestAllowedGithubApiUrl:
+    """Tests for GitHub API URL allowlist."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("https://api.github.com/repos/o/r/pulls/1", True),
+            ("http://api.github.com/repos/o/r/pulls/1", False),
+            ("https://evil.com/repos/o/r/pulls/1", False),
+            ("https://api.github.com.evil.com/repos/o/r/pulls/1", False),
+        ],
+    )
+    def test_is_allowed_github_api_url(self, url: str, expected: bool) -> None:
+        """Test URL allowlist accepts only HTTPS api.github.com."""
+        from pr2md.github_client import _is_allowed_github_api_url
+
+        assert _is_allowed_github_api_url(url) is expected
+
+    def test_request_rejects_non_github_url(self) -> None:
+        """Test HTTP requests reject URLs outside the GitHub API host."""
+        client = GitHubClient()
+        with pytest.raises(GitHubAPIError, match="Request URL rejected"):
+            client._request_with_retries("https://evil.com/steal")
+        client.close()

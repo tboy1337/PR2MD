@@ -117,18 +117,31 @@ class TestSetupLogging:
     """Tests for setup_logging function."""
 
     def test_setup_logging_default(self, mocker: MockerFixture) -> None:
-        """Test default logging setup."""
+        """Test default logging setup when no handlers exist."""
+        mocker.patch("logging.root.handlers", [])
         mock_basic_config = mocker.patch("logging.basicConfig")
         setup_logging()
         mock_basic_config.assert_called_once()
         assert mock_basic_config.call_args[1]["level"] == logging.INFO
 
     def test_setup_logging_verbose(self, mocker: MockerFixture) -> None:
-        """Test verbose logging setup."""
+        """Test verbose logging setup when no handlers exist."""
+        mocker.patch("logging.root.handlers", [])
         mock_basic_config = mocker.patch("logging.basicConfig")
         setup_logging(verbose=True)
         mock_basic_config.assert_called_once()
         assert mock_basic_config.call_args[1]["level"] == logging.DEBUG
+
+    def test_setup_logging_verbose_preserves_existing_handlers(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test verbose mode adjusts level without reconfiguring existing handlers."""
+        mocker.patch("logging.root.handlers", [mocker.Mock()])
+        mock_basic_config = mocker.patch("logging.basicConfig")
+        mock_set_level = mocker.patch("logging.root.setLevel")
+        setup_logging(verbose=True)
+        mock_basic_config.assert_not_called()
+        mock_set_level.assert_called_once_with(logging.DEBUG)
 
 
 class TestCreateParser:
@@ -1060,11 +1073,39 @@ class TestWriteOutput:
     def test_write_output_to_stdout(self, mocker: MockerFixture) -> None:
         """Test writing output to stdout."""
         markdown = "# Test Markdown"
-        mock_print = mocker.patch("builtins.print")
+        mock_write = mocker.patch("pr2md.cli._write_stdout")
 
         success = write_output(markdown, None, False)
         assert success is True
-        mock_print.assert_called_once_with(markdown)
+        mock_write.assert_called_once_with(markdown)
+
+    def test_write_output_logs_overwrite(
+        self, tmp_path: Path, mocker: MockerFixture
+    ) -> None:
+        """Test overwrite warning when writing to an existing file."""
+        output_file = tmp_path / "output.md"
+        output_file.write_text("old", encoding="utf-8")
+        mock_log = mocker.patch("pr2md.cli.log_overwrite_if_exists")
+
+        success = write_output("# New", str(output_file), False)
+        assert success is True
+        mock_log.assert_called_once_with(str(output_file))
+
+    def test_write_stdout_unicode_fallback(self, mocker: MockerFixture) -> None:
+        """Test stdout write uses UTF-8 when console reconfigure fails."""
+        from pr2md.cli import _write_stdout
+
+        mock_stdout = mocker.patch("pr2md.cli.sys.stdout")
+        mock_stdout.reconfigure = mocker.Mock(side_effect=OSError("unsupported"))
+        mock_stdout.buffer = mocker.Mock()
+
+        _write_stdout("café ☕")
+
+        mock_stdout.buffer.write.assert_any_call(
+            "café ☕".encode("utf-8", errors="replace")
+        )
+        mock_stdout.buffer.write.assert_any_call(b"\n")
+        mock_stdout.buffer.flush.assert_called_once()
 
     def test_write_output_file_error(self, mocker: MockerFixture) -> None:
         """Test writing output with file error."""
@@ -1093,6 +1134,11 @@ class TestMain:
             "pr2md.cli._resolve_primary_ref_type",
             side_effect=lambda ref_type, *_args, **_kwargs: ref_type,
         )
+
+    @pytest.fixture(autouse=True)
+    def _isolated_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Run main() tests in a temp directory so auto-named outputs never land in the repo."""
+        monkeypatch.chdir(tmp_path)
 
     def test_main_pr_success(self, mocker: MockerFixture) -> None:
         """Test successful main execution for PR."""
@@ -1282,7 +1328,7 @@ class TestMain:
             return_value=(False, skipped, []),
         )
         mocker.patch(
-            "pr2md.cli.Path.read_text",
+            "pr2md.cli.append_text_atomic",
             side_effect=OSError("read failed"),
         )
 
@@ -1411,10 +1457,10 @@ class TestCLIHypothesis:
         self, markdown: str, mocker: MockerFixture
     ) -> None:
         """Test writing output to stdout with various markdown content."""
-        mock_print = mocker.patch("builtins.print")
+        mock_write = mocker.patch("pr2md.cli._write_stdout")
         success = write_output(markdown, None, False)
         assert success is True
-        mock_print.assert_called_once_with(markdown)
+        mock_write.assert_called_once_with(markdown)
 
     @given(
         markdown=st.text(min_size=10, max_size=5000).filter(

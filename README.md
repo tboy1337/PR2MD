@@ -233,7 +233,7 @@ The tool uses the GitHub REST API **without authentication**. GitHub imposes rat
 - **Unauthenticated requests**: 60 requests per hour per IP address
 - **Authenticated requests**: 5,000 requests per hour (not supported by PR2MD)
 
-When the API returns a rate-limit response, PR2MD **waits and retries automatically** until the limit resets. Progress messages are logged at INFO level (for example, "Rate limited, waiting 45s…"). Massive PRs, issues, or reference chains may take a long time to complete on the unauthenticated API, but the run will finish without manual intervention.
+When the API returns a rate-limit response, PR2MD **waits and retries automatically**, up to **5 waits** or **3600 seconds** of total wait time per run. Progress messages are logged at INFO level (for example, "Rate limited, waiting 45s…"). If that budget is exhausted, the run fails with an error.
 
 For typical single PR or issue exports, unauthenticated access is usually sufficient. Reference downloading with `--depth` greater than zero consumes additional API calls. Use `--no-references` or lower `--depth` to reduce API usage.
 
@@ -241,20 +241,33 @@ For typical single PR or issue exports, unauthenticated access is usually suffic
 
 ## Data Completeness
 
-PR2MD does not silently truncate exports:
+PR2MD avoids silent truncation where possible, with explicit bounds:
 
-- **Paginated data** (comments, reviews, review comments) is fetched until GitHub returns no further pages
-- **Full diffs** are always included for pull requests, regardless of size
-- **Primary exports** fail without writing a file when an unrecoverable API error occurs
-- **Reference downloads** that fail are listed in stderr and appended as a `## Reference Download Summary` section in the primary markdown file; use `--strict` to exit with code 2 when any reference fails
+- **Paginated data** (comments, reviews, review comments) is fetched page-by-page until GitHub returns no further pages, up to a maximum of **100 pages (~10,000 items)** per endpoint; exceeding that limit fails with an error
+- **Full diffs** are always included for pull requests, regardless of size; a warning is logged when a diff exceeds 5 MB
+- **Primary exports** fail without writing a file when an unrecoverable API error occurs (exit code **1**)
+- **Reference downloads** that fail are listed in stderr and appended as a `## Reference Download Summary` section in the primary markdown file; use `--strict` to exit with code **2** when any reference fails
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Primary extraction, write, or summary append failed |
+| 2 | `--strict` was set and one or more reference downloads failed |
 
 ## Development
 
-Install the package and development dependencies:
+Install the package with development dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Alternatively, install runtime and dev dependencies separately:
 
 ```bash
 pip install -e .
-pip install -e ".[dev]"
 pip install -r requirements-dev.txt
 ```
 
@@ -274,10 +287,12 @@ pytest -m integration   # live API smoke tests
 ## Limitations
 
 - **Public repositories only** — no GitHub token or private-repo support
-- **Rate limited** — 60 API requests per hour without authentication; the tool waits and retries when limited
-- **Reference downloads** — failures are reported in the output file and stderr; use `--strict` for a non-zero exit code
+- **Rate limited** — 60 API requests per hour without authentication; the tool waits and retries when limited, up to 5 waits or 3600 seconds total per run
+- **Pagination cap** — at most 100 pages (~10,000 items) per paginated endpoint
+- **Reference downloads** — unbounded in count (only bounded by `--depth`); a PR or issue with many `#NNN` references can consume the full hourly API budget and produce many files. Failures are reported in the output file and stderr; use `--strict` for exit code 2
+- **Reference shorthand parsing** — `#123` and `owner/repo#123` are parsed as pull requests until download-time type correction
 - Requires an internet connection to fetch data
-- Large PRs with extensive diffs may generate very large Markdown files
+- Large PRs with extensive diffs may generate very large Markdown files and load the full diff into memory (warning logged above 5 MB)
 - Custom output paths (`-o path`) must stay within the current working directory
 - Issues accessed via the `/issues/` URL path are treated as issues; use `/pull/` or explicit `pr` for pull requests
 

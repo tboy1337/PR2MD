@@ -47,6 +47,7 @@ class TestReferenceParser:
         for ref in refs:
             assert ref.owner == "testowner"
             assert ref.repo == "testrepo"
+            assert ref.ref_type == "pr"
 
     def test_parse_cross_repo_reference(self, parser: ReferenceParser) -> None:
         """Test parsing cross-repository references."""
@@ -58,6 +59,7 @@ class TestReferenceParser:
         assert ref.owner == "microsoft"
         assert ref.repo == "vscode"
         assert ref.number == 12345
+        assert ref.ref_type == "pr"
 
     def test_parse_url_pr_reference(self, parser: ReferenceParser) -> None:
         """Test parsing full URL PR references."""

@@ -30,7 +30,7 @@ class TestGitHubIssueExtractor:
         mocker.patch.object(extractor._client, "get", return_value=sample_issue_dict)
 
         issue = extractor.fetch_issue_details()
-        assert issue.number == 456
+        assert issue.number == 123
         assert issue.title == "Test Issue"
         assert issue.state == "open"
         assert issue.user.login == "author"
@@ -183,5 +183,5 @@ class TestGitHubIssueExtractor:
         with caplog.at_level(logging.WARNING, logger="pr2md.issue_extractor"):
             issue = extractor.fetch_issue_details()
 
-        assert issue.number == 456
+        assert issue.number == 123
         assert any("pull request" in record.message for record in caplog.records)

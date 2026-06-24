@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -14,6 +15,7 @@ from pr2md.models import (
     Review,
     ReviewComment,
     User,
+    _require,
 )
 
 
@@ -33,6 +35,11 @@ class TestUser:
         assert user.id == 123
         assert user.avatar_url == "https://example.com/avatar.jpg"
         assert user.html_url == "https://github.com/testuser"
+
+    def test_require_missing_field(self) -> None:
+        """Test _require raises a clear ValueError for missing fields."""
+        with pytest.raises(ValueError, match="Missing required field 'login'"):
+            _require({}, "login", model="User")
 
 
 class TestLabel:
@@ -144,6 +151,37 @@ class TestIssue:
         assert issue.title == "Bug report"
         assert issue.body == "Steps to reproduce"
         assert issue.closed_at is None
+
+    def test_from_dict_null_body_and_deleted_user(self) -> None:
+        """Test Issue with null body and deleted user."""
+        data = {
+            "number": 99,
+            "title": "Ghost issue",
+            "body": None,
+            "state": "open",
+            "user": None,
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-02T00:00:00Z",
+            "closed_at": None,
+            "html_url": "https://github.com/owner/repo/issues/99",
+            "labels": [],
+        }
+        issue = Issue.from_dict(data)
+        assert issue.body is None
+        assert issue.user == DELETED_USER
+
+    def test_from_dict_missing_required_field(self) -> None:
+        """Test Issue from_dict reports missing API fields clearly."""
+        data = {
+            "number": 1,
+            "state": "open",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-02T00:00:00Z",
+            "html_url": "https://github.com/owner/repo/issues/1",
+            "labels": [],
+        }
+        with pytest.raises(ValueError, match="Missing required field 'title'"):
+            Issue.from_dict(data)
 
     def test_from_dict_closed_with_labels(self) -> None:
         """Test closed Issue with labels."""

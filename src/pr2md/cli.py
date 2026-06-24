@@ -11,7 +11,7 @@ from typing import Callable, NamedTuple, Optional, cast
 import requests
 
 from pr2md.exceptions import GitHubAPIError
-from pr2md.file_io import write_text_atomic
+from pr2md.file_io import append_text_atomic, log_overwrite_if_exists, write_text_atomic
 from pr2md.formatter import MarkdownFormatter
 from pr2md.github_client import GitHubClient
 from pr2md.issue_extractor import GitHubIssueExtractor
@@ -54,12 +54,29 @@ def setup_logging(verbose: bool = False) -> None:
         verbose: Enable verbose logging
     """
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        force=True,
-    )
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    else:
+        logging.root.setLevel(level)
+
+
+def _write_stdout(text: str) -> None:
+    """Write text to stdout using UTF-8, even on restrictive console encodings."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+            print(text)  # noqa: T201
+            return
+        except (OSError, ValueError):
+            pass
+    sys.stdout.buffer.write(text.encode("utf-8", errors="replace"))
+    sys.stdout.buffer.write(b"\n")
+    sys.stdout.buffer.flush()
 
 
 def parse_pr_url(url: str) -> tuple[str, str, str, int]:
@@ -417,8 +434,7 @@ def append_reference_summary(
         return True
 
     try:
-        existing = Path(output_path).read_text(encoding="utf-8")
-        write_text_atomic(output_path, f"{existing}\n\n{summary}")
+        append_text_atomic(output_path, f"\n\n{summary}")
         logger.info("Appended reference download summary to %s", output_path)
         return True
     except OSError as err:
@@ -442,10 +458,11 @@ def write_output(markdown: str, output_path: Optional[str], verbose: bool) -> bo
 
     try:
         if output_path:
+            log_overwrite_if_exists(output_path)
             write_text_atomic(output_path, markdown)
             logger.info("Output written to %s", output_path)
         else:
-            print(markdown)  # noqa: T201
+            _write_stdout(markdown)
         return True
     except OSError as err:
         _log_processing_error(logger, f"Error writing output: {err}", verbose)

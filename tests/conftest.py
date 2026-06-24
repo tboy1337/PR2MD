@@ -38,7 +38,7 @@ def sample_pr_dict() -> dict[str, Any]:
 def sample_issue_dict() -> dict[str, Any]:
     """Minimal issue API payload."""
     return {
-        "number": 456,
+        "number": 123,
         "title": "Test Issue",
         "body": "Issue body",
         "state": "open",
@@ -51,6 +51,6 @@ def sample_issue_dict() -> dict[str, Any]:
         "created_at": "2025-01-01T00:00:00Z",
         "updated_at": "2025-01-02T00:00:00Z",
         "closed_at": None,
-        "html_url": "https://github.com/owner/repo/issues/456",
+        "html_url": "https://github.com/owner/repo/issues/123",
         "labels": [],
     }

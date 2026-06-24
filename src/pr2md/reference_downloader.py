@@ -7,7 +7,7 @@ from typing import Literal, Optional
 import requests
 
 from pr2md.exceptions import GitHubAPIError
-from pr2md.file_io import write_text_atomic
+from pr2md.file_io import log_overwrite_if_exists, write_text_atomic
 from pr2md.formatter import MarkdownFormatter
 from pr2md.github_client import GitHubClient
 from pr2md.issue_extractor import GitHubIssueExtractor
@@ -254,8 +254,13 @@ class ReferenceDownloader:
         owner: str,
         repo: str,
         number: int,
-    ) -> tuple[str, Optional[set[GitHubReference]]]:
-        """Download and format a PR or issue reference."""
+    ) -> tuple[str, Optional[set[GitHubReference]], bool]:
+        """Download and format a PR or issue reference.
+
+        Returns:
+            Tuple of markdown, references found, and whether a 404 was received
+            (caller may retry with the alternate resource type).
+        """
         resource_label = "PR" if ref_type == "pr" else "Issue"
         logger.info("Downloading %s %s/%s #%d", resource_label, owner, repo, number)
 
@@ -264,7 +269,7 @@ class ReferenceDownloader:
                 markdown, references = self._format_pr_reference(owner, repo, number)
             else:
                 markdown, references = self._format_issue_reference(owner, repo, number)
-            return markdown, references
+            return markdown, references, False
         except (
             GitHubAPIError,
             requests.RequestException,
@@ -281,7 +286,8 @@ class ReferenceDownloader:
                 repo=repo,
                 number=number,
             )
-            return "", None
+            try_alternate = isinstance(err, GitHubAPIError) and err.status_code == 404
+            return "", None, try_alternate
 
     def download_pr(
         self, owner: str, repo: str, pr_number: int
@@ -298,7 +304,7 @@ class ReferenceDownloader:
             Tuple of (markdown content, set of references found)
             Returns (empty string, None) if download fails
         """
-        return self._download_and_format("pr", owner, repo, pr_number)
+        return self._download_and_format("pr", owner, repo, pr_number)[:2]
 
     def download_issue(
         self, owner: str, repo: str, issue_number: int
@@ -315,7 +321,7 @@ class ReferenceDownloader:
             Tuple of (markdown content, set of references found)
             Returns (empty string, None) if download fails
         """
-        return self._download_and_format("issue", owner, repo, issue_number)
+        return self._download_and_format("issue", owner, repo, issue_number)[:2]
 
     def determine_ref_type(
         self, owner: str, repo: str, number: int
@@ -360,20 +366,20 @@ class ReferenceDownloader:
         repo: str,
         number: int,
     ) -> tuple[str, Optional[set[GitHubReference]], Literal["issue", "pr"]]:
-        """Download markdown, falling back to the alternate resource type."""
-        if ref_type == "pr":
-            markdown, found_refs = self.download_pr(owner, repo, number)
-        else:
-            markdown, found_refs = self.download_issue(owner, repo, number)
-
+        """Download markdown, falling back to the alternate type only on 404."""
+        markdown, found_refs, try_alternate = self._download_and_format(
+            ref_type, owner, repo, number
+        )
         if markdown:
             return markdown, found_refs, ref_type
 
+        if not try_alternate:
+            return "", found_refs, ref_type
+
         alternate: Literal["issue", "pr"] = "issue" if ref_type == "pr" else "pr"
-        if alternate == "pr":
-            markdown, found_refs = self.download_pr(owner, repo, number)
-        else:
-            markdown, found_refs = self.download_issue(owner, repo, number)
+        markdown, found_refs, _ = self._download_and_format(
+            alternate, owner, repo, number
+        )
         if markdown:
             return markdown, found_refs, alternate
         return "", found_refs, ref_type
@@ -447,6 +453,7 @@ class ReferenceDownloader:
         )
         try:
             validated_path = validate_output_path(filename)
+            log_overwrite_if_exists(validated_path)
             write_text_atomic(validated_path, markdown)
             logger.info("Saved %s", filename)
         except (ValueError, OSError) as err:

@@ -216,3 +216,7 @@ coverage.xml
 
 # Pylint report
 pylint-report.txt
+
+# Default CLI output filenames (written to cwd during local runs/tests)
+/PR-*.md
+/Issue-*.md

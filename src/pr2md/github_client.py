@@ -394,12 +394,6 @@ class GitHubClient:
                 url=url,
             )
         if status == 403:
-            if _is_rate_limited(response):
-                raise GitHubAPIError(
-                    "GitHub API rate limit exceeded unexpectedly.",
-                    status_code=status,
-                    url=url,
-                )
             raise GitHubAPIError(
                 f"Access forbidden: {url}",
                 status_code=status,
