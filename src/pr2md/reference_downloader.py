@@ -2,6 +2,7 @@
 
 import json
 import logging
+from types import TracebackType
 from typing import Literal, Optional
 
 import requests
@@ -14,7 +15,13 @@ from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
 from pr2md.reference_parser import GitHubReference, ReferenceParser
-from pr2md.validation import validate_output_path
+from pr2md.validation import (
+    sanitize_filename_component,
+    validate_depth,
+    validate_output_path,
+    validate_owner,
+    validate_repo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +47,10 @@ class ReferenceDownloader:
             verbose: Enable verbose logging
             client: Optional shared GitHub API client
         """
+        validate_owner(base_owner)
+        validate_repo(base_repo)
+        validate_depth(max_depth)
+
         self.base_owner = base_owner
         self.base_repo = base_repo
         self.max_depth = max_depth
@@ -66,7 +77,7 @@ class ReferenceDownloader:
         self,
         exc_type: Optional[type[BaseException]],
         exc_val: Optional[BaseException],
-        exc_tb: Optional[object],
+        exc_tb: Optional[TracebackType],
     ) -> None:
         self.close()
 
@@ -121,8 +132,10 @@ class ReferenceDownloader:
             Generated filename
         """
         prefix = ""
+        safe_owner = sanitize_filename_component(owner)
+        safe_repo = sanitize_filename_component(repo)
         if (owner, repo) != (self.base_owner, self.base_repo):
-            prefix = f"{owner}-{repo}-"
+            prefix = f"{safe_owner}-{safe_repo}-"
 
         type_str = "PR" if ref_type == "pr" else "Issue"
         return f"{prefix}{type_str}-{number}.md"
@@ -188,6 +201,32 @@ class ReferenceDownloader:
 
         logger.info("Found %d references in Issue #%d", len(references), issue.number)
         return references
+
+    # pylint: disable=too-many-return-statements
+    def _download_error_reason(self, err: Exception) -> str:
+        """Return a short user-facing reason for a download failure."""
+        if isinstance(err, GitHubAPIError):
+            status_messages = {
+                404: "Not found (404)",
+                403: "Access forbidden (403)",
+                401: "Authentication required (401)",
+            }
+            if err.status_code in status_messages:
+                return status_messages[err.status_code]
+            if err.status_code is not None:
+                return f"GitHub API error ({err.status_code})"
+            return "GitHub API error"
+        reason_by_type = {
+            requests.RequestException: "Network request failed",
+            json.JSONDecodeError: "Invalid JSON response",
+        }
+        if type(err) in reason_by_type:
+            return reason_by_type[type(err)]
+        if isinstance(err, OSError):
+            return f"File error: {err}"
+        if isinstance(err, ValueError):
+            return f"Invalid data: {err}"
+        return str(err)
 
     def _log_download_error(
         self,
@@ -266,12 +305,12 @@ class ReferenceDownloader:
         number: int,
         *,
         cached_issue_payload: Optional[dict[str, object]] = None,
-    ) -> tuple[str, Optional[set[GitHubReference]], bool]:
+    ) -> tuple[str, Optional[set[GitHubReference]], bool, str]:
         """Download and format a PR or issue reference.
 
         Returns:
-            Tuple of markdown, references found, and whether a 404 was received
-            (caller may retry with the alternate resource type).
+            Tuple of markdown, references found, whether a 404 was received
+            (caller may retry with the alternate resource type), and failure reason.
         """
         resource_label = "PR" if ref_type == "pr" else "Issue"
         logger.info("Downloading %s %s/%s #%d", resource_label, owner, repo, number)
@@ -286,16 +325,15 @@ class ReferenceDownloader:
                     number,
                     cached_issue_payload=cached_issue_payload,
                 )
-            return markdown, references, False
+            return markdown, references, False, ""
         except (
             GitHubAPIError,
             requests.RequestException,
             OSError,
             json.JSONDecodeError,
-            KeyError,
             ValueError,
-            TypeError,
         ) as err:
+            reason = self._download_error_reason(err)
             self._log_download_error(
                 err,
                 resource_label=resource_label,
@@ -304,7 +342,7 @@ class ReferenceDownloader:
                 number=number,
             )
             try_alternate = isinstance(err, GitHubAPIError) and err.status_code == 404
-            return "", None, try_alternate
+            return "", None, try_alternate, reason
 
     def download_pr(
         self, owner: str, repo: str, pr_number: int
@@ -401,9 +439,9 @@ class ReferenceDownloader:
         *,
         type_confirmed: bool = False,
         cached_issue_payload: Optional[dict[str, object]] = None,
-    ) -> tuple[str, Optional[set[GitHubReference]], Literal["issue", "pr"]]:
+    ) -> tuple[str, Optional[set[GitHubReference]], Literal["issue", "pr"], str]:
         """Download markdown, falling back to the alternate type only on 404."""
-        markdown, found_refs, try_alternate = self._download_and_format(
+        markdown, found_refs, try_alternate, reason = self._download_and_format(
             ref_type,
             owner,
             repo,
@@ -411,18 +449,18 @@ class ReferenceDownloader:
             cached_issue_payload=cached_issue_payload,
         )
         if markdown:
-            return markdown, found_refs, ref_type
+            return markdown, found_refs, ref_type, ""
 
         if not try_alternate or type_confirmed:
-            return "", found_refs, ref_type
+            return "", found_refs, ref_type, reason
 
         alternate: Literal["issue", "pr"] = "issue" if ref_type == "pr" else "pr"
-        markdown, found_refs, _ = self._download_and_format(
+        markdown, found_refs, _, alt_reason = self._download_and_format(
             alternate, owner, repo, number
         )
         if markdown:
-            return markdown, found_refs, alternate
-        return "", found_refs, ref_type
+            return markdown, found_refs, alternate, ""
+        return "", found_refs, ref_type, alt_reason or reason
 
     def download_reference(
         self, reference: GitHubReference, current_depth: int
@@ -474,7 +512,7 @@ class ReferenceDownloader:
         ref_type = actual_type
         reference = self._reference_with_type(reference, ref_type)
 
-        markdown, found_refs, ref_type = self._fetch_reference_markdown(
+        markdown, found_refs, ref_type, failure_reason = self._fetch_reference_markdown(
             ref_type,
             reference.owner,
             reference.repo,
@@ -486,7 +524,8 @@ class ReferenceDownloader:
 
         if not markdown:
             self.record_skipped_reference(
-                reference, "Download failed (see logs for details)"
+                reference,
+                failure_reason or "Download failed (see logs for details)",
             )
             return []
 

@@ -6,7 +6,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Callable, NamedTuple, Optional, cast
+from typing import Callable, Literal, NamedTuple, Optional, cast
 
 import requests
 
@@ -36,7 +36,7 @@ class ParsedArguments(NamedTuple):
 
     owner: str
     repo: str
-    ref_type: str
+    ref_type: Literal["pr", "issue"]
     number: int
     output_path: Optional[str]
     auto_output: bool
@@ -238,13 +238,14 @@ def parse_arguments(parser: argparse.ArgumentParser) -> ParsedArguments:
     logger = logging.getLogger(__name__)
 
     try:
-        owner, repo, ref_type, number = _parse_identifier_from_args(
+        owner, repo, ref_type_str, number = _parse_identifier_from_args(
             list(args.pr_identifier)
         )
+        ref_type = cast(Literal["pr", "issue"], ref_type_str)
         validate_owner(owner)
         validate_repo(repo)
         validate_issue_number(number)
-    except (ValueError, IndexError) as err:
+    except ValueError as err:
         logger.error("Error parsing identifier: %s", err)
         sys.exit(1)
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PR2MD"
-version = "1.0.20"
+version = "1.0.21"
 description = "Pull Request Markdown Generator"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -60,6 +60,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["pr2md*"]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+pr2md = ["py.typed"]
 
 # Black Configuration
 [tool.black]

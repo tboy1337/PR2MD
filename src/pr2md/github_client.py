@@ -13,20 +13,24 @@ import requests
 
 from pr2md._version import get_version
 from pr2md.exceptions import GitHubAPIError
+from pr2md.validation import validate_issue_number, validate_owner, validate_repo
 
 _PACKAGE_VERSION = get_version()
 
 logger = logging.getLogger(__name__)
 
 # Transient server errors: bounded retries with exponential backoff.
-_RETRYABLE_STATUS_CODES = {502, 503, 504}
+_RETRYABLE_STATUS_CODES = {408, 500, 502, 503, 504}
 _MAX_RETRIES = 3
 # Connect and read timeouts in seconds (connect, read).
 _REQUEST_TIMEOUT = (10, 30)
+_DIFF_READ_TIMEOUT = 300
 # Items per page when paginating list endpoints.
 _PER_PAGE = 100
 _MAX_PAGINATED_PAGES = 100
 _MAX_ERROR_BODY_LENGTH = 500
+_MAX_ERROR_BODY_BYTES = 8 * 1024
+_CHUNK_SIZE = 64 * 1024
 _ALLOWED_API_HOST = "api.github.com"
 _RATE_LIMIT_REMAINING_WARN_THRESHOLD = 10
 _MAX_RATE_LIMIT_WAITS = 5
@@ -52,12 +56,77 @@ def _is_allowed_github_api_url(url: str) -> bool:
     return parsed.scheme == "https" and parsed.netloc == _ALLOWED_API_HOST
 
 
+def _validate_endpoint(endpoint: str) -> None:
+    """Validate an API endpoint path before interpolation into a URL."""
+    if not endpoint.startswith("/"):
+        raise ValueError(f"Invalid API endpoint: {endpoint!r} must start with '/'")
+    if ".." in endpoint:
+        raise ValueError(f"Invalid API endpoint: {endpoint!r} contains '..'")
+
+
+def _read_response_bytes(response: requests.Response) -> bytes:
+    """Read the full response body in fixed-size chunks (no size ceiling)."""
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
+        if chunk:
+            chunks.append(chunk)
+            total += len(chunk)
+    logger.debug("Read response body (%d bytes)", total)
+    return b"".join(chunks)
+
+
+def _read_response_text(response: requests.Response) -> str:
+    """Decode a streamed response body as text."""
+    raw = _read_response_bytes(response)
+    encoding = response.encoding or "utf-8"
+    return raw.decode(encoding, errors="replace")
+
+
+def _read_bounded_error_snippet(response: requests.Response) -> str:
+    """Read up to *_MAX_ERROR_BODY_BYTES* of an error response for diagnostics."""
+    chunks: list[bytes] = []
+    total = 0
+    truncated = False
+    for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
+        if not chunk:
+            continue
+        remaining = _MAX_ERROR_BODY_BYTES - total
+        if remaining <= 0:
+            truncated = True
+            break
+        piece = chunk[:remaining]
+        chunks.append(piece)
+        total += len(piece)
+        if len(chunk) > remaining:
+            truncated = True
+            break
+    encoding = response.encoding or "utf-8"
+    text = b"".join(chunks).decode(encoding, errors="replace")
+    if truncated:
+        if len(text) > _MAX_ERROR_BODY_LENGTH:
+            text = f"{text[:_MAX_ERROR_BODY_LENGTH]}... (truncated)"
+        else:
+            text = f"{text}... (truncated)"
+    elif len(text) > _MAX_ERROR_BODY_LENGTH:
+        text = f"{text[:_MAX_ERROR_BODY_LENGTH]}... (truncated)"
+    return text
+
+
 def _is_rate_limited(response: requests.Response) -> bool:
     """Return True when the response indicates an API rate limit."""
     if response.status_code == 429:
         return True
-    if response.status_code == 403 and "rate limit" in response.text.lower():
-        return True
+    if response.status_code == 403:
+        remaining = response.headers.get("X-RateLimit-Remaining")
+        if remaining is not None:
+            try:
+                if int(remaining) == 0:
+                    return True
+            except ValueError:
+                pass
+        snippet = _read_bounded_error_snippet(response).lower()
+        return "rate limit" in snippet
     return False
 
 
@@ -99,6 +168,29 @@ def _log_rate_limit_headers(response: requests.Response) -> None:
             pass
     if reset is not None:
         logger.debug("X-RateLimit-Reset: %s", reset)
+
+
+def _redirect_pin_hook(
+    response: requests.Response, *_args: object, **_kwargs: object
+) -> requests.Response:
+    """Reject redirects that leave the GitHub API host."""
+    if response.is_redirect:
+        location = response.headers.get("Location", "")
+        if location and not _is_allowed_github_api_url(location):
+            raise GitHubAPIError(
+                f"Redirect rejected (not GitHub API): {location}",
+                status_code=response.status_code,
+                url=response.url,
+            )
+    return response
+
+
+def _request_timeout_for_headers(headers: dict[str, str]) -> tuple[int, int]:
+    """Return connect/read timeouts; extend read timeout for diff responses."""
+    accept = headers.get("Accept", "")
+    if "diff" in accept.lower():
+        return (_REQUEST_TIMEOUT[0], _DIFF_READ_TIMEOUT)
+    return _REQUEST_TIMEOUT
 
 
 class GitHubClient:
@@ -153,6 +245,11 @@ class GitHubClient:
         Raises:
             GitHubAPIError: If the request fails after retries
         """
+        try:
+            _validate_endpoint(endpoint)
+        except ValueError as err:
+            raise GitHubAPIError(str(err)) from err
+
         url = f"{self.base_url}{endpoint}"
         headers: dict[str, str] = {}
         if accept:
@@ -162,7 +259,12 @@ class GitHubClient:
         self._raise_for_status(response, url)
 
         if accept and "diff" in accept:
-            return str(response.text)
+            text = _read_response_text(response)
+            logger.debug(
+                "Read diff response (%d bytes)",
+                len(text.encode("utf-8", errors="replace")),
+            )
+            return text
         return self._parse_json_response(response, url)
 
     def get_paginated(self, endpoint: str) -> list[Any]:
@@ -175,6 +277,11 @@ class GitHubClient:
         Returns:
             Combined list of items from all pages
         """
+        try:
+            _validate_endpoint(endpoint)
+        except ValueError as err:
+            raise GitHubAPIError(str(err)) from err
+
         separator = "&" if "?" in endpoint else "?"
         url: Optional[str] = f"{self.base_url}{endpoint}{separator}per_page={_PER_PAGE}"
         items: list[Any] = []
@@ -225,6 +332,10 @@ class GitHubClient:
         Uses the issues endpoint which returns both; PRs include a pull_request key.
         The JSON payload can be reused for issue extraction to avoid a duplicate call.
         """
+        validate_owner(owner)
+        validate_repo(repo)
+        validate_issue_number(number)
+
         endpoint = f"/repos/{owner}/{repo}/issues/{number}"
         try:
             data = self.get(endpoint)
@@ -251,8 +362,9 @@ class GitHubClient:
         return ref_type
 
     def _parse_json_response(self, response: requests.Response, url: str) -> Any:
+        raw = _read_response_bytes(response)
         try:
-            return response.json()
+            return json.loads(raw)
         except json.JSONDecodeError as err:
             raise GitHubAPIError(
                 f"Invalid JSON response from {url}: {err}",
@@ -273,10 +385,13 @@ class GitHubClient:
                 url=url,
             )
 
-        merged_headers = dict(self.session.headers)
+        merged_headers: dict[str, str] = {
+            str(key): str(value) for key, value in self.session.headers.items()
+        }
         if headers:
             merged_headers.update(headers)
 
+        timeout = _request_timeout_for_headers(merged_headers)
         transient_attempt = 0
 
         while True:
@@ -290,7 +405,8 @@ class GitHubClient:
                     url,
                     headers=merged_headers,
                     params=params,
-                    timeout=_REQUEST_TIMEOUT,
+                    timeout=timeout,
+                    hooks={"response": [_redirect_pin_hook]},
                 )
             except requests.RequestException as err:
                 if transient_attempt < _MAX_RETRIES - 1:
@@ -409,9 +525,7 @@ class GitHubClient:
                 url=url,
             )
         if status != 200:
-            body = response.text
-            if len(body) > _MAX_ERROR_BODY_LENGTH:
-                body = f"{body[:_MAX_ERROR_BODY_LENGTH]}... (truncated)"
+            body = _read_bounded_error_snippet(response)
             raise GitHubAPIError(
                 f"GitHub API request failed with status {status}: {body}",
                 status_code=status,

@@ -4,10 +4,21 @@ import re
 from pathlib import Path
 
 _GITHUB_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+$")
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *{f"COM{i}" for i in range(1, 10)},
+        *{f"LPT{i}" for i in range(1, 10)},
+    }
+)
 _MAX_OWNER_LENGTH = 39
 _MAX_REPO_LENGTH = 100
 _MAX_ISSUE_NUMBER = 2**31 - 1
 _MAX_DEPTH = 10
+_STREAM_CHUNK_SIZE = 64 * 1024
 
 
 def validate_github_name(name: str, field: str, *, max_length: int) -> None:
@@ -58,6 +69,22 @@ def validate_depth(depth: int) -> None:
         raise ValueError(f"Invalid depth: {depth} exceeds maximum of {_MAX_DEPTH}")
 
 
+def sanitize_filename_component(name: str) -> str:
+    """
+    Prefix Windows reserved device names so they are safe as filename parts.
+
+    Args:
+        name: A single path component (no directory separators)
+
+    Returns:
+        The original name, or '_' + name when reserved on Windows
+    """
+    stem = Path(name).stem.upper() if "." in name else name.upper()
+    if stem in _WINDOWS_RESERVED_NAMES:
+        return f"_{name}"
+    return name
+
+
 def _contains_symlink_component(base: Path, logical_path: Path) -> bool:
     """Return True when any component under *base* is a symlink."""
     candidate = base
@@ -66,6 +93,47 @@ def _contains_symlink_component(base: Path, logical_path: Path) -> bool:
         if candidate.is_symlink():
             return True
     return False
+
+
+def _assert_within_cwd(dest: Path, base: Path, display_path: str) -> None:
+    """Raise ValueError when *dest* is outside *base*."""
+    try:
+        dest.relative_to(base)
+    except ValueError as err:
+        raise ValueError(
+            f"Invalid output path: '{display_path}' must be within the current "
+            f"working directory ({base})"
+        ) from err
+
+
+def assert_safe_write_path(path: Path | str) -> Path:
+    """
+    Re-validate a resolved path immediately before writing.
+
+    Returns:
+        Resolved absolute path under the current working directory
+
+    Raises:
+        ValueError: If the path escapes CWD or contains a symlink component
+    """
+    target = Path(path)
+    base = Path.cwd().resolve()
+    try:
+        relative = target.resolve().relative_to(base)
+    except ValueError as err:
+        raise ValueError(
+            f"Invalid output path: '{target}' must be within the current "
+            f"working directory ({base})"
+        ) from err
+
+    if _contains_symlink_component(base, relative):
+        raise ValueError(
+            f"Invalid output path: '{relative}' contains a symlink component"
+        )
+
+    dest = (base / relative).resolve()
+    _assert_within_cwd(dest, base, str(relative))
+    return dest
 
 
 def validate_output_path(output_path: str) -> str:
@@ -89,11 +157,5 @@ def validate_output_path(output_path: str) -> str:
         )
 
     dest = logical.resolve()
-    try:
-        dest.relative_to(base)
-    except ValueError as err:
-        raise ValueError(
-            f"Invalid output path: '{output_path}' must be within the current "
-            f"working directory ({base})"
-        ) from err
+    _assert_within_cwd(dest, base, output_path)
     return str(dest)

@@ -1,6 +1,7 @@
 """GitHub Pull Request data extraction."""
 
 import logging
+from types import TracebackType
 from typing import Any, Optional
 
 from pr2md.github_client import GitHubClient
@@ -44,7 +45,7 @@ class GitHubPRExtractor:
         self,
         exc_type: Optional[type[BaseException]],
         exc_val: Optional[BaseException],
-        exc_tb: Optional[object],
+        exc_tb: Optional[TracebackType],
     ) -> None:
         self.close()
 

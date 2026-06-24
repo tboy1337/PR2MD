@@ -81,6 +81,39 @@ class TestReferenceDownloader:
             html_url="https://github.com/owner/repo/issues/1#issuecomment-1",
         )
 
+    def test_initialization_rejects_invalid_owner(self) -> None:
+        """Test constructor validates base repository owner."""
+        with pytest.raises(ValueError, match="Invalid owner"):
+            ReferenceDownloader("bad owner", "repo")
+
+    def test_generate_filename_windows_reserved_repo(self) -> None:
+        """Test reserved Windows device names are sanitized in filenames."""
+        downloader = ReferenceDownloader("owner", "repo")
+        filename = downloader.generate_filename("pr", "CON", "repo", 1)
+        assert filename == "_CON-repo-PR-1.md"
+
+    def test_download_reference_records_specific_skip_reason(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test failed downloads record a specific skip reason."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+        mocker.patch.object(
+            downloader,
+            "determine_ref_type_and_payload",
+            return_value=("pr", None),
+        )
+        mocker.patch.object(
+            downloader,
+            "_fetch_reference_markdown",
+            return_value=("", None, "pr", "Not found (404)"),
+        )
+
+        files = downloader.download_reference(ref, current_depth=1)
+
+        assert not files
+        assert downloader.skipped_references[0][1] == "Not found (404)"
+
     def test_initialization(self) -> None:
         """Test downloader initialization."""
         downloader = ReferenceDownloader("owner", "repo", max_depth=3)
@@ -360,7 +393,7 @@ class TestReferenceDownloader:
         mocker.patch.object(
             downloader,
             "_download_and_format",
-            return_value=("# PR", set(), False),
+            return_value=("# PR", set(), False, ""),
         )
         mocker.patch("pr2md.reference_downloader.write_text_atomic")
 
@@ -440,7 +473,7 @@ class TestReferenceDownloader:
         mock_format = mocker.patch.object(
             downloader,
             "_download_and_format",
-            return_value=("", None, True),
+            return_value=("", None, True, "Not found (404)"),
         )
 
         files = downloader.download_reference(ref, current_depth=1)
@@ -457,10 +490,13 @@ class TestReferenceDownloader:
         mocker.patch.object(
             downloader,
             "_download_and_format",
-            side_effect=[("", None, True), ("# Issue", set(), False)],
+            side_effect=[
+                ("", None, True, "Not found (404)"),
+                ("# Issue", set(), False, ""),
+            ],
         )
 
-        markdown, refs, ref_type = downloader._fetch_reference_markdown(
+        markdown, refs, ref_type, _reason = downloader._fetch_reference_markdown(
             "pr", "owner", "repo", 1, type_confirmed=False
         )
 
@@ -483,7 +519,7 @@ class TestReferenceDownloader:
         mocker.patch.object(
             downloader,
             "_fetch_reference_markdown",
-            return_value=("", None, "issue"),
+            return_value=("", None, "issue", "Not found (404)"),
         )
 
         files = downloader.download_reference(ref, current_depth=1)
@@ -506,7 +542,7 @@ class TestReferenceDownloader:
         mocker.patch.object(
             downloader,
             "_download_and_format",
-            return_value=("# Test PR", set(), False),
+            return_value=("# Test PR", set(), False, ""),
         )
 
         # Mock file write
@@ -555,9 +591,9 @@ class TestReferenceDownloader:
             downloader,
             "_download_and_format",
             side_effect=lambda ref_type, _o, _r, number, **kwargs: (
-                ("# PR", {child_ref}, False)
+                ("# PR", {child_ref}, False, "")
                 if number == 1
-                else ("# Issue", set(), False)
+                else ("# Issue", set(), False, "")
             ),
         )
         mocker.patch("pr2md.reference_downloader.write_text_atomic")
@@ -577,7 +613,7 @@ class TestReferenceDownloader:
         mocker.patch.object(
             downloader,
             "_download_and_format",
-            return_value=("# Test PR", set(), False),
+            return_value=("# Test PR", set(), False, ""),
         )
         mocker.patch(
             "pr2md.reference_downloader.write_text_atomic",
@@ -643,7 +679,7 @@ class TestReferenceDownloader:
         mocker.patch.object(
             downloader,
             "_download_and_format",
-            return_value=("# Test PR", set(), False),
+            return_value=("# Test PR", set(), False, ""),
         )
         mock_write = mocker.patch(
             "pr2md.reference_downloader.write_text_atomic",
@@ -669,10 +705,12 @@ class TestReferenceDownloadEfficiency:
         """Test alternate type is not tried when primary failure is not a 404."""
         downloader = ReferenceDownloader("owner", "repo")
         mock_format = mocker.patch.object(
-            downloader, "_download_and_format", return_value=("", None, False)
+            downloader,
+            "_download_and_format",
+            return_value=("", None, False, "GitHub API error"),
         )
 
-        markdown, refs, ref_type = downloader._fetch_reference_markdown(
+        markdown, refs, ref_type, _reason = downloader._fetch_reference_markdown(
             "pr", "owner", "repo", 1
         )
 

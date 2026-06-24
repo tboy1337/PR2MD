@@ -770,9 +770,9 @@ class TestDownloadReferencesIfNeeded:
         assert not skipped
         assert not depth_skipped
 
-    def test_append_reference_summary(self, tmp_path: Path) -> None:
+    def test_append_reference_summary(self, work_dir: Path) -> None:
         """Test appending reference summary to an existing file."""
-        output = tmp_path / "PR-1.md"
+        output = work_dir / "PR-1.md"
         output.write_text("# PR\n", encoding="utf-8")
         ref = GitHubReference(ref_type="issue", owner="o", repo="r", number=2)
 
@@ -781,9 +781,9 @@ class TestDownloadReferencesIfNeeded:
         assert "## Reference Download Summary" in content
         assert "not found" in content
 
-    def test_append_reference_summary_depth_skipped_only(self, tmp_path: Path) -> None:
+    def test_append_reference_summary_depth_skipped_only(self, work_dir: Path) -> None:
         """Test appending depth-limit summary without failures."""
-        output = tmp_path / "PR-1.md"
+        output = work_dir / "PR-1.md"
         output.write_text("# PR\n", encoding="utf-8")
         ref = GitHubReference(ref_type="issue", owner="o", repo="r", number=2)
 
@@ -1132,9 +1132,9 @@ class TestResolvePrimaryRefType:
 class TestWriteOutput:
     """Tests for write_output function."""
 
-    def test_write_output_to_file(self, tmp_path: Path) -> None:
+    def test_write_output_to_file(self, work_dir: Path) -> None:
         """Test writing output to file."""
-        output_file = tmp_path / "output.md"
+        output_file = work_dir / "output.md"
         markdown = "# Test Markdown"
 
         success = write_output(markdown, str(output_file), False)
@@ -1151,16 +1151,31 @@ class TestWriteOutput:
         mock_write.assert_called_once_with(markdown)
 
     def test_write_output_logs_overwrite(
-        self, tmp_path: Path, mocker: MockerFixture
+        self, work_dir: Path, mocker: MockerFixture
     ) -> None:
         """Test overwrite warning when writing to an existing file."""
-        output_file = tmp_path / "output.md"
+        output_file = work_dir / "output.md"
         output_file.write_text("old", encoding="utf-8")
         mock_log = mocker.patch("pr2md.cli.log_overwrite_if_exists")
 
         success = write_output("# New", str(output_file), False)
         assert success is True
         mock_log.assert_called_once_with(str(output_file))
+
+    def test_write_stdout_success_path(self, mocker: MockerFixture) -> None:
+        """Test stdout write uses reconfigure and print on success."""
+        from pr2md.cli import _write_stdout
+
+        mock_stdout = mocker.patch("pr2md.cli.sys.stdout")
+        mock_stdout.reconfigure = mocker.Mock()
+        mock_print = mocker.patch("builtins.print")
+
+        _write_stdout("hello world")
+
+        mock_stdout.reconfigure.assert_called_once_with(
+            encoding="utf-8", errors="replace"
+        )
+        mock_print.assert_called_once_with("hello world")
 
     def test_write_stdout_unicode_fallback(self, mocker: MockerFixture) -> None:
         """Test stdout write uses UTF-8 when console reconfigure fails."""
@@ -1455,10 +1470,10 @@ class TestMain:
         assert append_reference_summary("output.md", [(ref, "reason")]) is True
 
     def test_append_reference_summary_write_failure(
-        self, tmp_path: Path, mocker: MockerFixture
+        self, work_dir: Path, mocker: MockerFixture
     ) -> None:
         """Test append returns False when atomic append fails."""
-        output = tmp_path / "PR-1.md"
+        output = work_dir / "PR-1.md"
         output.write_text("# PR\n", encoding="utf-8")
         ref = GitHubReference(ref_type="issue", owner="o", repo="r", number=2)
         mocker.patch("pr2md.cli.append_text_atomic", side_effect=OSError("disk full"))
@@ -1603,10 +1618,13 @@ class TestCLIHypothesis:
         suppress_health_check=[HealthCheck.function_scoped_fixture],
     )
     def test_write_output_file_property(
-        self, markdown: str, filename: str, tmp_path: Path
+        self,
+        markdown: str,
+        filename: str,
+        work_dir: Path,
     ) -> None:
         """Test writing output to file with various markdown content."""
-        output_file = tmp_path / filename
+        output_file = work_dir / filename
         success = write_output(markdown, str(output_file), False)
         assert success is True
         assert output_file.exists()

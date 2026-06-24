@@ -244,9 +244,10 @@ For typical single PR or issue exports, unauthenticated access is usually suffic
 PR2MD avoids silent truncation where possible, with explicit bounds:
 
 - **Paginated data** (comments, reviews, review comments) is fetched page-by-page until GitHub returns no further pages, up to a maximum of **100 pages (~10,000 items)** per endpoint; exceeding that limit fails with an error
-- **Full diffs** are always included for pull requests, regardless of size; a warning is logged when a diff exceeds 5 MB
+- **Full diffs** are always included for pull requests, regardless of size; a warning is logged when a diff exceeds 5 MB. Large diffs use streaming HTTP reads with an extended read timeout (300 seconds)
+- **Reference downloads** are unlimited in count; only `--depth` bounds recursion
 - **Primary exports** fail without writing a file when an unrecoverable API error occurs (exit code **1**)
-- **Reference downloads** that fail are listed in stderr and appended as a `## Reference Download Summary` section in the primary markdown file; use `--strict` to exit with code **2** when any reference fails
+- **Reference downloads** that fail are listed in stderr and appended as a `## Reference Download Summary` section in the primary markdown file; use `--strict` to exit with code **2** when any reference fails. Summary appends use streaming I/O so they work on very large output files
 
 ## Exit Codes
 
@@ -289,11 +290,11 @@ pytest -m integration   # live API smoke tests
 - **Public repositories only** — no GitHub token or private-repo support
 - **Rate limited** — 60 API requests per hour without authentication; the tool waits and retries when limited, up to 5 waits or 3600 seconds total per run
 - **Pagination cap** — at most 100 pages (~10,000 items) per paginated endpoint
-- **Reference downloads** — unbounded in count (only bounded by `--depth`); a PR or issue with many `#NNN` references can consume the full hourly API budget and produce many files. Failures are reported in the output file and stderr; use `--strict` for exit code 2
+- **Reference downloads** — unlimited in count; only `--depth` bounds recursion. A PR or issue with many `#NNN` references can consume the full hourly API budget and produce many files. Failures are reported in the output file and stderr; use `--strict` for exit code 2
 - **Reference shorthand parsing** — `#123` and `owner/repo#123` are parsed as pull requests until download-time type correction
 - Requires an internet connection to fetch data
-- Large PRs with extensive diffs may generate very large Markdown files and load the full diff into memory (warning logged above 5 MB)
-- Custom output paths (`-o path`) must stay within the current working directory
+- Large PRs with extensive diffs may generate very large Markdown files; responses are streamed (no artificial size cap) with a 5 MB informational warning and a 300 second diff read timeout
+- Custom output paths (`-o path`) must stay within the current working directory; nested subdirectories are created automatically when needed
 - Issues accessed via the `/issues/` URL path are treated as issues; use `/pull/` or explicit `pr` for pull requests
 
 ## License

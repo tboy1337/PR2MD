@@ -6,6 +6,8 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pr2md.validation import (
+    assert_safe_write_path,
+    sanitize_filename_component,
     validate_depth,
     validate_github_name,
     validate_issue_number,
@@ -149,3 +151,29 @@ class TestValidation:
         monkeypatch.chdir(work_dir)
         with pytest.raises(ValueError):
             validate_output_path("escape_link/outside.md")
+
+    def test_sanitize_filename_component_reserved_names(self) -> None:
+        """Test Windows reserved device names are prefixed."""
+        assert sanitize_filename_component("CON") == "_CON"
+        assert sanitize_filename_component("com1") == "_com1"
+        assert sanitize_filename_component("owner") == "owner"
+
+    def test_assert_safe_write_path_rejects_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test pre-write path check rejects paths outside CWD."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        monkeypatch.chdir(work_dir)
+        with pytest.raises(
+            ValueError, match="must be within the current working directory"
+        ):
+            assert_safe_write_path(work_dir.parent / "outside.md")
+
+    def test_assert_safe_write_path_accepts_valid_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test pre-write path check accepts paths inside CWD."""
+        monkeypatch.chdir(tmp_path)
+        resolved = assert_safe_write_path("report.md")
+        assert resolved == (tmp_path / "report.md").resolve()

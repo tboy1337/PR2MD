@@ -1,8 +1,55 @@
 """Shared pytest fixtures."""
 
-from typing import Any
+import json
+from pathlib import Path
+from typing import Any, Iterator
 
 import pytest
+from pytest_mock import MockerFixture
+
+
+def make_http_response(
+    mocker: MockerFixture,
+    *,
+    status_code: int = 200,
+    body: bytes | str = b"",
+    json_data: object | None = None,
+    headers: dict[str, str] | None = None,
+    encoding: str = "utf-8",
+    is_redirect: bool = False,
+    redirect_location: str = "",
+) -> object:
+    """Build a requests.Response mock with streaming iter_content support."""
+    if json_data is not None:
+        payload = json.dumps(json_data).encode(encoding)
+    elif isinstance(body, str):
+        payload = body.encode(encoding)
+    else:
+        payload = body
+
+    response = mocker.Mock()
+    response.status_code = status_code
+    response.headers = headers or {}
+    response.encoding = encoding
+    response.is_redirect = is_redirect
+    if is_redirect:
+        response.headers = {**response.headers, "Location": redirect_location}
+
+    def iter_content(chunk_size: int = 65536) -> Iterator[bytes]:
+        offset = 0
+        while offset < len(payload):
+            yield payload[offset : offset + chunk_size]
+            offset += chunk_size
+
+    response.iter_content = iter_content
+    return response
+
+
+@pytest.fixture
+def work_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Use a temporary directory as the process working directory."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
 
 
 @pytest.fixture

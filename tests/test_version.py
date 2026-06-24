@@ -13,8 +13,16 @@ class TestVersion:
     """Tests for get_version and fallback parsing."""
 
     def test_get_version_uses_installed_metadata(self) -> None:
-        """Test installed package metadata is preferred."""
-        assert get_version()
+        """Test installed package metadata is preferred when available."""
+        from importlib.metadata import PackageNotFoundError, version
+
+        version_value = get_version()
+        assert version_value
+        try:
+            installed = version("PR2MD")
+        except PackageNotFoundError:
+            return
+        assert installed == version_value
 
     def test_pyproject_path_points_at_repo_root(self) -> None:
         """Test pyproject path resolves beside the repository root."""
