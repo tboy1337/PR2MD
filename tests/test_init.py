@@ -29,5 +29,5 @@ class TestPackageInit:
             side_effect=PackageNotFoundError("PR2MD"),
         )
         importlib.reload(pr2md)
-        assert pr2md.__version__ == "1.0.16"
+        assert pr2md.__version__ == "1.0.17"
         importlib.reload(pr2md)

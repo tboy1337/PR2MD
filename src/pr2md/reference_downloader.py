@@ -46,6 +46,7 @@ class ReferenceDownloader:
         self.verbose = verbose
         self.parser = ReferenceParser(base_owner, base_repo)
         self.downloaded: set[GitHubReference] = set()
+        self._downloaded_keys: set[tuple[str, str, int]] = set()
         self.skipped_references: list[tuple[GitHubReference, str]] = []
         self.had_download_failures = False
         self._owns_client = client is None
@@ -383,12 +384,12 @@ class ReferenceDownloader:
         Returns:
             List of filenames that were downloaded
         """
-        if reference in self.downloaded:
+        ref_key = (reference.owner, reference.repo, reference.number)
+        if ref_key in self._downloaded_keys:
             logger.debug(
-                "Skipping already downloaded reference: %s/%s %s #%d",
+                "Skipping already downloaded reference: %s/%s #%d",
                 reference.owner,
                 reference.repo,
-                reference.ref_type,
                 reference.number,
             )
             return []
@@ -443,6 +444,7 @@ class ReferenceDownloader:
             return []
 
         self.downloaded.add(reference)
+        self._downloaded_keys.add(ref_key)
         downloaded_files = [filename]
 
         if found_refs and current_depth < self.max_depth:

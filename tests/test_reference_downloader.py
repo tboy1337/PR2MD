@@ -289,11 +289,62 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
         ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
 
-        # Mark as already downloaded
-        downloader.downloaded.add(ref)
+        downloader._downloaded_keys.add(("owner", "repo", 1))
 
         files = downloader.download_reference(ref, current_depth=1)
         assert len(files) == 0
+
+    def test_skips_already_downloaded_by_number(self, mocker: MockerFixture) -> None:
+        """Test duplicate references with different types skip second download."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
+        ref_pr = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+        ref_issue = GitHubReference(
+            ref_type="issue", owner="owner", repo="repo", number=1
+        )
+
+        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader,
+            "download_pr",
+            return_value=("# PR", set()),
+        )
+        mocker.patch("pr2md.reference_downloader.write_text_atomic")
+
+        first = downloader.download_reference(ref_pr, current_depth=1)
+        second = downloader.download_reference(ref_issue, current_depth=1)
+
+        assert len(first) == 1
+        assert len(second) == 0
+
+    def test_log_skipped_summary(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test skipped reference summary is logged."""
+        downloader = ReferenceDownloader("owner", "repo")
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=9)
+        downloader.record_skipped_reference(ref, "not found")
+
+        with caplog.at_level(logging.ERROR):
+            downloader.log_skipped_summary()
+
+        assert "Failed to download 1 referenced item(s)" in caplog.text
+        assert "owner/repo #9" in caplog.text
+
+    def test_log_download_error_verbose_traceback(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test verbose mode logs traceback for unexpected download errors."""
+        downloader = ReferenceDownloader("owner", "repo", verbose=True)
+        mocker.patch.object(
+            downloader,
+            "_format_pr_reference",
+            side_effect=ValueError("boom"),
+        )
+
+        with caplog.at_level(logging.ERROR):
+            downloader.download_pr("owner", "repo", 1)
+
+        assert any(
+            "Unexpected error downloading PR" in r.message for r in caplog.records
+        )
 
     def test_download_reference_depth_limit(
         self, caplog: pytest.LogCaptureFixture

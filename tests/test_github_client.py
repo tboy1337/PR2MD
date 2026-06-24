@@ -1,6 +1,7 @@
 """Tests for GitHub API client."""
 
 import json
+import logging
 
 import pytest
 import requests
@@ -452,6 +453,46 @@ class TestGitHubClient:
 
         with pytest.raises(GitHubAPIError, match="Pagination limit exceeded"):
             client.get_paginated("/repos/o/r/issues/1/comments")
+        client.close()
+
+    def test_log_rate_limit_low_remaining(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test low remaining rate limit triggers info log."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+        mock_response.headers = {"X-RateLimit-Remaining": "5"}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with caplog.at_level(logging.INFO, logger="pr2md.github_client"):
+            client.get("/repos/o/r")
+
+        assert any("nearly exhausted" in record.message for record in caplog.records)
+        client.close()
+
+    def test_rate_limit_wait_invalid_reset_header(self, mocker: MockerFixture) -> None:
+        """Test invalid reset header falls back to default wait."""
+        from pr2md.github_client import _rate_limit_wait_seconds
+
+        response = mocker.Mock()
+        response.headers = {"X-RateLimit-Reset": "not-a-timestamp"}
+        assert _rate_limit_wait_seconds(response) == 60.0
+
+    def test_connection_error_retry_exhausted(self, mocker: MockerFixture) -> None:
+        """Test connection errors retry until exhausted."""
+        client = GitHubClient()
+        mock_get = mocker.patch.object(
+            client.session,
+            "get",
+            side_effect=requests.ConnectionError("network down"),
+        )
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        with pytest.raises(GitHubAPIError, match="GitHub API request failed"):
+            client.get("/repos/o/r")
+        assert mock_get.call_count == 3
         client.close()
 
 

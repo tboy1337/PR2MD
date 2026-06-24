@@ -39,6 +39,7 @@ class ParsedArguments(NamedTuple):
     ref_type: str
     number: int
     output_path: Optional[str]
+    auto_output: bool
     verbose: bool
     depth: int
     no_references: bool
@@ -74,7 +75,7 @@ def parse_pr_url(url: str) -> tuple[str, str, str, int]:
     Raises:
         ValueError: If URL is invalid
     """
-    pattern = r"https://github\.com/([^/]+)/([^/]+)/(pull|issues)/(\d+)"
+    pattern = r"https://github\.com/([^/]+)/([^/]+)/(pull|issues)/(\d+)/?$"
     match = re.match(pattern, url)
     if not match:
         raise ValueError(
@@ -83,9 +84,13 @@ def parse_pr_url(url: str) -> tuple[str, str, str, int]:
             "https://github.com/owner/repo/issues/123"
         )
     owner, repo, ref_type_str, number_str = match.groups()
+    number = int(number_str)
+    validate_owner(owner)
+    validate_repo(repo)
+    validate_issue_number(number)
     # Normalize "issues" to "issue"
     ref_type = "issue" if ref_type_str == "issues" else "pr"
-    return str(owner), str(repo), ref_type, int(number_str)
+    return str(owner), str(repo), ref_type, number
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -181,21 +186,16 @@ def _parse_identifier_from_args(pr_args: list[str]) -> tuple[str, str, str, int]
     )
 
 
-def _output_path_from_args(
-    args: argparse.Namespace,
-    ref_type: str,
-    number: int,
-) -> Optional[str]:
+def _auto_output_path(ref_type: str, number: int) -> str:
+    """Build and validate the default output filename for a resource type."""
+    type_str = "PR" if ref_type == "pr" else "Issue"
+    return validate_output_path(f"{type_str}-{number}.md")
+
+
+def _output_path_from_args(args: argparse.Namespace) -> Optional[str]:
     """Resolve the output path from parsed CLI arguments."""
     if args.output is None:
-        type_str = "PR" if ref_type == "pr" else "Issue"
-        auto_path = f"{type_str}-{number}.md"
-        try:
-            return validate_output_path(auto_path)
-        except ValueError as err:
-            logger = logging.getLogger(__name__)
-            logger.error("%s", err)
-            sys.exit(1)
+        return None
     if args.output == _STDOUT_SENTINEL:
         return None
     try:
@@ -231,7 +231,8 @@ def parse_arguments(parser: argparse.ArgumentParser) -> ParsedArguments:
         logger.error("Error parsing identifier: %s", err)
         sys.exit(1)
 
-    output_path = _output_path_from_args(args, ref_type, number)
+    output_path = _output_path_from_args(args)
+    auto_output = args.output is None
     verbose = bool(args.verbose)
     depth = int(args.depth)
     no_references = bool(args.no_references)
@@ -249,6 +250,7 @@ def parse_arguments(parser: argparse.ArgumentParser) -> ParsedArguments:
         ref_type=ref_type,
         number=number,
         output_path=output_path,
+        auto_output=auto_output,
         verbose=verbose,
         depth=depth,
         no_references=no_references,
@@ -567,6 +569,8 @@ def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,to
     number: int,
     verbose: bool,
     client: GitHubClient,
+    *,
+    resolved_type: Optional[str] = None,
 ) -> tuple[
     str,
     bool,
@@ -575,47 +579,78 @@ def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,to
     list[Comment],
     list[Review],
     list[ReviewComment],
+    str,
 ]:
-    """Extract and format the target PR or issue."""
+    """Extract and format the target PR or issue.
+
+    Returns:
+        Tuple ending with the resolved resource type (``pr`` or ``issue``).
+    """
     logger = logging.getLogger(__name__)
-    try:
-        resolved_type = _resolve_primary_ref_type(ref_type, owner, repo, number, client)
-    except GitHubAPIError as err:
-        logger.error("GitHub API error: %s", err)
-        return "", False, None, None, [], [], []
+    if resolved_type is None:
+        try:
+            resolved_type = _resolve_primary_ref_type(
+                ref_type, owner, repo, number, client
+            )
+        except GitHubAPIError as err:
+            logger.error("GitHub API error: %s", err)
+            return "", False, None, None, [], [], [], ref_type
 
     if resolved_type == "pr":
         markdown, success, pull_request, comments, reviews, review_comments = (
             extract_pr_data(owner, repo, number, verbose, client=client)
         )
-        return markdown, success, pull_request, None, comments, reviews, review_comments
+        return (
+            markdown,
+            success,
+            pull_request,
+            None,
+            comments,
+            reviews,
+            review_comments,
+            resolved_type,
+        )
 
     markdown, success, issue, comments = extract_issue_data(
         owner, repo, number, verbose, client=client
     )
-    return markdown, success, None, issue, comments, [], []
+    return markdown, success, None, issue, comments, [], [], resolved_type
 
 
-def main() -> None:
-    """Main entry point for the CLI."""
-    parser = create_parser()
-    setup_logging(False)
-    cli_args = parse_arguments(parser)
-
-    if cli_args.verbose:
-        setup_logging(True)
+def _execute_cli(cli_args: ParsedArguments) -> None:  # pylint: disable=too-many-locals
+    """Run extraction, output, and reference download using a shared client."""
     logger = logging.getLogger(__name__)
 
-    type_str = "PR" if cli_args.ref_type == "pr" else "Issue"
-    logger.info(
-        "Extracting %s %s/%s #%d",
-        type_str,
-        cli_args.owner,
-        cli_args.repo,
-        cli_args.number,
-    )
-
     with GitHubClient() as client:
+        try:
+            resolved_type = _resolve_primary_ref_type(
+                cli_args.ref_type,
+                cli_args.owner,
+                cli_args.repo,
+                cli_args.number,
+                client,
+            )
+        except GitHubAPIError as err:
+            logger.error("GitHub API error: %s", err)
+            sys.exit(1)
+
+        output_path = cli_args.output_path
+        if cli_args.auto_output:
+            try:
+                output_path = _auto_output_path(resolved_type, cli_args.number)
+            except ValueError as err:
+                logger.error("%s", err)
+                sys.exit(1)
+
+        type_str = "PR" if resolved_type == "pr" else "Issue"
+        logger.info(
+            "Extracting %s %s/%s #%d",
+            type_str,
+            cli_args.owner,
+            cli_args.repo,
+            cli_args.number,
+        )
+
         (
             markdown,
             success,
@@ -624,6 +659,7 @@ def main() -> None:
             comments,
             reviews,
             review_comments,
+            _resolved_type,
         ) = _run_primary_extraction(
             cli_args.ref_type,
             cli_args.owner,
@@ -631,12 +667,13 @@ def main() -> None:
             cli_args.number,
             cli_args.verbose,
             client,
+            resolved_type=resolved_type,
         )
 
         if not success:
             sys.exit(1)
 
-        if not write_output(markdown, cli_args.output_path, cli_args.verbose):
+        if not write_output(markdown, output_path, cli_args.verbose):
             sys.exit(1)
 
         logger.info("Extraction completed successfully")
@@ -644,9 +681,9 @@ def main() -> None:
         references_ok, skipped_references = download_references_if_needed(
             cli_args.owner,
             cli_args.repo,
-            cli_args.ref_type,
+            resolved_type,
             cli_args.number,
-            cli_args.output_path,
+            output_path,
             cli_args.depth,
             cli_args.no_references,
             cli_args.verbose,
@@ -658,12 +695,24 @@ def main() -> None:
             client=client,
         )
 
-        if skipped_references and cli_args.output_path:
-            if not append_reference_summary(cli_args.output_path, skipped_references):
+        if skipped_references and output_path:
+            if not append_reference_summary(output_path, skipped_references):
                 sys.exit(1)
 
         if cli_args.strict and not references_ok:
             sys.exit(2)
+
+
+def main() -> None:
+    """Main entry point for the CLI."""
+    parser = create_parser()
+    setup_logging(False)
+    cli_args = parse_arguments(parser)
+
+    if cli_args.verbose:
+        setup_logging(True)
+
+    _execute_cli(cli_args)
 
 
 if __name__ == "__main__":

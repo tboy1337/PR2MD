@@ -184,8 +184,10 @@ class GitHubClient:
             page_count += 1
             if page_count > _MAX_PAGINATED_PAGES:
                 raise GitHubAPIError(
-                    f"Pagination limit exceeded ({_MAX_PAGINATED_PAGES} pages) "
-                    f"for {endpoint}",
+                    f"Pagination limit exceeded ({_MAX_PAGINATED_PAGES} pages, "
+                    f"~{_MAX_PAGINATED_PAGES * _PER_PAGE} items) for {endpoint}. "
+                    "If downloading references, try --no-references or a lower "
+                    "--depth.",
                     url=url,
                 )
             if not _is_allowed_github_api_url(url):

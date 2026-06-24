@@ -130,6 +130,22 @@ class TestReferenceParser:
         ref = list(refs)[0]
         assert ref.number == 123
 
+    def test_dedupes_same_number_different_ref_type(
+        self, parser: ReferenceParser
+    ) -> None:
+        """Test URL type wins over shorthand for the same number."""
+        text = (
+            "Fixes #123 and see "
+            "https://github.com/testowner/testrepo/issues/123 for details"
+        )
+        refs = parser.parse_references(text)
+
+        assert len(refs) == 1
+        ref = list(refs)[0]
+        assert ref.number == 123
+        assert ref.ref_type == "issue"
+        assert ref.from_url is True
+
     def test_parse_url_case_insensitive(self, parser: ReferenceParser) -> None:
         """Test that URL parsing is case insensitive."""
         text = "See HTTPS://GITHUB.COM/owner/repo/PULL/999"

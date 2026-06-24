@@ -134,9 +134,10 @@ class GitHubPRExtractor:
         diff: str = self._client.get(endpoint, accept="application/vnd.github.v3.diff")
         diff_size = len(diff.encode("utf-8"))
         if diff_size > _DIFF_SIZE_WARNING_BYTES:
-            logger.info(
-                "PR diff is large (%d bytes); including full diff in export",
-                diff_size,
+            size_mb = diff_size / (1024 * 1024)
+            logger.warning(
+                "PR diff is large (%.1f MB); full diff will be included in export",
+                size_mb,
             )
         logger.info("Fetched diff (%d bytes)", len(diff))
         return diff

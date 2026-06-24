@@ -75,8 +75,22 @@ class ReferenceParser:
         # Parse same-repo references
         references.update(self._parse_same_repo_references(text))
 
-        logger.debug("Found %d references in text", len(references))
-        return references
+        deduped = self._dedupe_references(references)
+        logger.debug("Found %d references in text", len(deduped))
+        return deduped
+
+    @staticmethod
+    def _dedupe_references(references: set[GitHubReference]) -> set[GitHubReference]:
+        """Dedupe by owner/repo/number, preferring URL-derived references."""
+        by_key: dict[tuple[str, str, int], GitHubReference] = {}
+        for reference in references:
+            key = (reference.owner, reference.repo, reference.number)
+            existing = by_key.get(key)
+            if existing is None:
+                by_key[key] = reference
+            elif reference.from_url and not existing.from_url:
+                by_key[key] = reference
+        return set(by_key.values())
 
     def _validated_reference(
         self,

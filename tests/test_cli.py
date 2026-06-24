@@ -63,14 +63,19 @@ class TestCLI:
             parse_pr_url("http://github.com/owner/repo/pull/456")
 
     def test_parse_pr_url_with_trailing_slash(self) -> None:
-        """Test parsing PR URL with trailing content."""
+        """Test parsing PR URL with trailing slash."""
         owner, repo, ref_type, number = parse_pr_url(
-            "https://github.com/owner/repo/pull/789"
+            "https://github.com/owner/repo/pull/789/"
         )
         assert owner == "owner"
         assert repo == "repo"
         assert ref_type == "pr"
         assert number == 789
+
+    def test_parse_pr_url_invalid_owner_in_url(self) -> None:
+        """Test parsing URL with invalid owner name."""
+        with pytest.raises(ValueError, match="Invalid owner"):
+            parse_pr_url("https://github.com/bad!owner/repo/pull/1")
 
     def test_parse_issue_url_valid_https(self) -> None:
         """Test parsing valid HTTPS Issue URL."""
@@ -187,6 +192,7 @@ class TestParseArguments:
             ref_type,
             number,
             output_path,
+            auto_output,
             verbose,
             depth,
             no_references,
@@ -196,7 +202,8 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "pr"
         assert number == 123
-        assert output_path == _resolved_output_path("PR-123.md")
+        assert output_path is None
+        assert auto_output is True
         assert verbose is False
         assert depth == 2  # default value
         assert no_references is False
@@ -216,6 +223,7 @@ class TestParseArguments:
             ref_type,
             number,
             output_path,
+            auto_output,
             verbose,
             depth,
             no_references,
@@ -225,7 +233,8 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "issue"
         assert number == 456
-        assert output_path == _resolved_output_path("Issue-456.md")
+        assert output_path is None
+        assert auto_output is True
         assert verbose is False
         assert depth == 2
         assert no_references is False
@@ -241,6 +250,7 @@ class TestParseArguments:
             ref_type,
             number,
             output_path,
+            auto_output,
             verbose,
             depth,
             no_references,
@@ -250,7 +260,8 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "pr"
         assert number == 123
-        assert output_path == _resolved_output_path("PR-123.md")
+        assert output_path is None
+        assert auto_output is True
         assert verbose is False
         assert depth == 2
         assert no_references is False
@@ -268,6 +279,7 @@ class TestParseArguments:
             ref_type,
             number,
             output_path,
+            auto_output,
             verbose,
             depth,
             no_references,
@@ -277,7 +289,8 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "issue"
         assert number == 789
-        assert output_path == _resolved_output_path("Issue-789.md")
+        assert output_path is None
+        assert auto_output is True
         assert verbose is False
         assert depth == 2
         assert no_references is False
@@ -297,12 +310,14 @@ class TestParseArguments:
             _ref_type,
             _number,
             output_path,
+            auto_output,
             _verbose,
             _depth,
             _no_references,
             _strict,
         ) = parse_arguments(parser)
         assert Path(output_path).name == "output.md"
+        assert auto_output is False
 
     def test_parse_arguments_with_verbose(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with verbose flag."""
@@ -318,6 +333,7 @@ class TestParseArguments:
             _ref_type,
             _number,
             _output_path,
+            auto_output,
             verbose,
             _depth,
             _no_references,
@@ -371,6 +387,7 @@ class TestParseArguments:
             _ref_type,
             _number,
             output_path,
+            auto_output,
             _verbose,
             _depth,
             _no_references,
@@ -378,33 +395,8 @@ class TestParseArguments:
         ) = parse_arguments(parser)
         assert output_path is None
 
-    def test_parse_arguments_auto_generated_pr_filename(
-        self, mocker: MockerFixture
-    ) -> None:
-        """Test that auto-generated filename follows PR-{number}.md format."""
-        parser = create_parser()
-        mocker.patch.object(
-            sys,
-            "argv",
-            ["pr2md", "owner", "repo", "pr", "999"],
-        )
-        (
-            _owner,
-            _repo,
-            _ref_type,
-            _number,
-            output_path,
-            _verbose,
-            _depth,
-            _no_references,
-            _strict,
-        ) = parse_arguments(parser)
-        assert output_path == _resolved_output_path("PR-999.md")
-
-    def test_parse_arguments_auto_generated_issue_filename(
-        self, mocker: MockerFixture
-    ) -> None:
-        """Test that auto-generated filename follows Issue-{number}.md format."""
+    def test_parse_arguments_auto_output_deferred(self, mocker: MockerFixture) -> None:
+        """Test auto output path is deferred until type resolution in main."""
         parser = create_parser()
         mocker.patch.object(
             sys,
@@ -417,12 +409,14 @@ class TestParseArguments:
             _ref_type,
             _number,
             output_path,
+            auto_output,
             _verbose,
             _depth,
             _no_references,
             _strict,
         ) = parse_arguments(parser)
-        assert output_path == _resolved_output_path("Issue-888.md")
+        assert output_path is None
+        assert auto_output is True
 
     def test_parse_arguments_with_depth(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with depth flag."""
@@ -438,6 +432,7 @@ class TestParseArguments:
             _ref_type,
             _number,
             _output_path,
+            auto_output,
             _verbose,
             depth,
             _no_references,
@@ -459,6 +454,7 @@ class TestParseArguments:
             _ref_type,
             _number,
             _output_path,
+            auto_output,
             _verbose,
             _depth,
             no_references,
@@ -480,6 +476,7 @@ class TestParseArguments:
             _ref_type,
             _number,
             _output_path,
+            auto_output,
             _verbose,
             _depth,
             _no_references,
@@ -956,6 +953,22 @@ class TestResolvePrimaryRefType:
             _resolve_primary_ref_type("issue", "owner", "repo", 1, mock_client) == "pr"
         )
 
+    def test_auto_corrects_pr_to_issue(self, mocker: MockerFixture) -> None:
+        """Test auto-correction when pr arg targets an issue."""
+        mock_client = mocker.Mock()
+        mock_client.fetch_issue_or_pr_type.return_value = "issue"
+
+        assert (
+            _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "issue"
+        )
+
+    def test_returns_original_type_when_not_found(self, mocker: MockerFixture) -> None:
+        """Test original type is kept when resource is not found."""
+        mock_client = mocker.Mock()
+        mock_client.fetch_issue_or_pr_type.return_value = None
+
+        assert _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "pr"
+
     def test_run_primary_extraction_uses_resolved_type(
         self, mocker: MockerFixture
     ) -> None:
@@ -970,7 +983,9 @@ class TestResolvePrimaryRefType:
         )
         mock_issue_extract = mocker.patch("pr2md.cli.extract_issue_data")
 
-        _run_primary_extraction("issue", "owner", "repo", 1, False, mocker.Mock())
+        _run_primary_extraction(
+            "issue", "owner", "repo", 1, False, mocker.Mock(), resolved_type="pr"
+        )
 
         mock_issue_extract.assert_not_called()
 
@@ -1050,7 +1065,7 @@ class TestMain:
         mock_client_cm.return_value.__enter__.return_value = mock_client
         mocker.patch(
             "pr2md.cli._run_primary_extraction",
-            return_value=("# Markdown", True, MagicMock(), None, [], [], []),
+            return_value=("# Markdown", True, MagicMock(), None, [], [], [], "pr"),
         )
         mocker.patch("pr2md.cli.write_output", return_value=True)
         mocker.patch(
@@ -1188,6 +1203,63 @@ class TestMain:
             main()
         assert exc_info.value.code == 1
 
+    def test_main_append_summary_os_error(self, mocker: MockerFixture) -> None:
+        """Test main exits when appending summary hits OSError."""
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123"],
+        )
+        mock_pr = MagicMock()
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, mock_pr, [], [], []),
+        )
+        mocker.patch("pr2md.cli.write_output", return_value=True)
+        skipped = [
+            (
+                GitHubReference(ref_type="issue", owner="owner", repo="repo", number=2),
+                "not found",
+            )
+        ]
+        mocker.patch(
+            "pr2md.cli.download_references_if_needed",
+            return_value=(False, skipped),
+        )
+        mocker.patch(
+            "pr2md.cli.Path.read_text",
+            side_effect=OSError("read failed"),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+
+    def test_main_auto_corrects_output_filename(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """Test auto output filename uses resolved type, not user-supplied type."""
+        mocker.patch.object(sys, "argv", ["pr2md", "owner", "repo", "issue", "42"])
+        mocker.patch("pr2md.cli._resolve_primary_ref_type", return_value="pr")
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, MagicMock(), [], [], []),
+        )
+        mock_write = mocker.patch("pr2md.cli.write_output", return_value=True)
+        mocker.patch(
+            "pr2md.cli.download_references_if_needed",
+            return_value=(True, []),
+        )
+        mocker.patch(
+            "pr2md.cli.validate_output_path", side_effect=lambda p: str(tmp_path / p)
+        )
+
+        main()
+
+        write_path = mock_write.call_args[0][1]
+        assert write_path is not None
+        assert Path(write_path).name == "PR-42.md"
+
     def test_module_entry_point_help(self) -> None:
         """Test python -m pr2md --help runs successfully."""
         result = subprocess.run(
@@ -1213,8 +1285,8 @@ class TestCLIHypothesis:
     """Hypothesis tests for CLI functions."""
 
     @given(
-        owner=st.from_regex(r"[\w-]{1,39}", fullmatch=True),
-        repo=st.from_regex(r"[\w.-]{1,100}", fullmatch=True),
+        owner=st.from_regex(r"[a-zA-Z0-9._-]{1,39}", fullmatch=True),
+        repo=st.from_regex(r"[a-zA-Z0-9._-]{1,100}", fullmatch=True),
         pr_number=st.integers(min_value=1, max_value=100000),
         protocol=st.sampled_from(["https"]),
     )
@@ -1231,8 +1303,8 @@ class TestCLIHypothesis:
         assert parsed_number == pr_number
 
     @given(
-        owner=st.from_regex(r"[\w-]{1,39}", fullmatch=True),
-        repo=st.from_regex(r"[\w.-]{1,100}", fullmatch=True),
+        owner=st.from_regex(r"[a-zA-Z0-9._-]{1,39}", fullmatch=True),
+        repo=st.from_regex(r"[a-zA-Z0-9._-]{1,100}", fullmatch=True),
         issue_number=st.integers(min_value=1, max_value=100000),
         protocol=st.sampled_from(["https"]),
     )
@@ -1311,8 +1383,8 @@ class TestCLIHypothesis:
         assert output_file.read_text(encoding="utf-8") == markdown
 
     @given(
-        owner=st.from_regex(r"[\w-]{1,39}", fullmatch=True),
-        repo=st.from_regex(r"[\w.-]{1,100}", fullmatch=True),
+        owner=st.from_regex(r"[a-zA-Z0-9._-]{1,39}", fullmatch=True),
+        repo=st.from_regex(r"[a-zA-Z0-9._-]{1,100}", fullmatch=True),
         pr_number=st.integers(min_value=1, max_value=100000),
     )
     @settings(max_examples=30, deadline=2000)
@@ -1326,8 +1398,8 @@ class TestCLIHypothesis:
         assert result1 == result2
 
     @given(
-        owner=st.from_regex(r"[\w-]{1,39}", fullmatch=True),
-        repo=st.from_regex(r"[\w.-]{1,100}", fullmatch=True),
+        owner=st.from_regex(r"[a-zA-Z0-9._-]{1,39}", fullmatch=True),
+        repo=st.from_regex(r"[a-zA-Z0-9._-]{1,100}", fullmatch=True),
         pr_number=st.integers(min_value=1, max_value=100000),
     )
     @settings(max_examples=30, deadline=2000)

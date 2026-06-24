@@ -7,17 +7,46 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+from typing import Sequence
+
+# Portable directory names (no platform-specific separators).
+_CHECK_DIRS: tuple[str, ...] = ("src", "tests", "scripts")
+_VERIFY_SCRIPT = Path("scripts") / "verify.py"
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _run_step(name: str, args: list[str]) -> None:
+def _python_m(module: str, *module_args: str) -> list[str]:
+    """Build a ``sys.executable -m module`` command (works on Windows and Unix)."""
+    return [sys.executable, "-m", module, *module_args]
+
+
+def _run_step(name: str, args: Sequence[str], *, cwd: Path | None = None) -> None:
+    """Run a subprocess step; raise SystemExit on non-zero exit code."""
     print(f"==> {name}")
-    result = subprocess.run(args, cwd=_repo_root(), check=False)
+    result = subprocess.run(
+        list(args),
+        cwd=cwd if cwd is not None else _repo_root(),
+        check=False,
+    )
     if result.returncode != 0:
         raise SystemExit(f"Step failed: {name} (exit code {result.returncode})")
+
+
+def _autopep8_args(*, fix: bool) -> list[str]:
+    args = _python_m("autopep8", "--select=W291,W293", "-r", *_CHECK_DIRS)
+    mode_flag = "--in-place" if fix else "--diff"
+    args.insert(3, mode_flag)
+    return args
+
+
+def _isort_args(*, fix: bool) -> list[str]:
+    args = _python_m("isort", *_CHECK_DIRS)
+    if not fix:
+        args.insert(3, "--check-only")
+    return args
 
 
 def main() -> None:
@@ -30,37 +59,30 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    python = sys.executable
-    autopep8_args = [
-        python,
-        "-m",
-        "autopep8",
-        "--select=W291,W293",
-        "-r",
-        "src",
-        "tests",
-    ]
-    if args.fix:
-        autopep8_args.insert(3, "--in-place")
-    else:
-        autopep8_args.insert(3, "--diff")
-
-    isort_args = [python, "-m", "isort", "src", "tests"]
-    if not args.fix:
-        isort_args.insert(3, "--check-only")
+    root = _repo_root()
+    pylint_report = root / "pylint-report.txt"
+    verify_script = str(_VERIFY_SCRIPT)
 
     steps: list[tuple[str, list[str]]] = [
-        ("autopep8 (trailing whitespace)", autopep8_args),
-        ("isort", isort_args),
-        ("black", [python, "-m", "black", "--check", "src", "tests"]),
-        ("mypy", [python, "-m", "mypy", "src/pr2md", "tests"]),
-        ("pylint", [python, "-m", "pylint", "src/pr2md", "--output=pylint-report.txt"]),
-        ("bandit", [python, "-m", "bandit", "-r", "src/pr2md", "-q"]),
-        ("pytest", [python, "-m", "pytest"]),
+        ("autopep8 (trailing whitespace)", _autopep8_args(fix=args.fix)),
+        ("isort", _isort_args(fix=args.fix)),
+        ("black", _python_m("black", "--check", *_CHECK_DIRS)),
+        (
+            "mypy",
+            _python_m("mypy", "src/pr2md", "tests", verify_script),
+        ),
+        (
+            "pylint (package)",
+            _python_m("pylint", "src/pr2md", f"--output={pylint_report}"),
+        ),
+        ("pylint (verify)", _python_m("pylint", verify_script)),
+        ("bandit", _python_m("bandit", "-r", "src/pr2md", "-q")),
+        ("safety", _python_m("safety", "check", "--full-report")),
+        ("pytest", _python_m("pytest")),
     ]
 
     for name, step_args in steps:
-        _run_step(name, step_args)
+        _run_step(name, step_args, cwd=root)
 
     print("All verification steps passed.")
 

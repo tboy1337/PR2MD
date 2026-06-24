@@ -191,8 +191,9 @@ class TestGitHubPRExtractor:
         large_diff = "x" * (6 * 1024 * 1024)
         mocker.patch.object(extractor._client, "get", return_value=large_diff)
 
-        with caplog.at_level(logging.INFO, logger="pr2md.pr_extractor"):
+        with caplog.at_level(logging.WARNING, logger="pr2md.pr_extractor"):
             diff = extractor.fetch_diff()
 
         assert diff == large_diff
+        assert any(record.levelname == "WARNING" for record in caplog.records)
         assert any("large" in record.message.lower() for record in caplog.records)

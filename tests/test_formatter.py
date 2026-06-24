@@ -653,6 +653,15 @@ class TestMarkdownFormatterHypothesis:
         assert "## Conversation Thread" in formatted
         if not comment_objects:
             assert "*No comments in the conversation thread.*" in formatted
+            return
+
+        sorted_comments = sorted(comment_objects, key=lambda c: c.created_at)
+        positions = [
+            formatted.index(comment.user.login)
+            for comment in sorted_comments
+            if comment.user.login in formatted
+        ]
+        assert positions == sorted(positions)
 
     @given(
         review_state=st.sampled_from(
