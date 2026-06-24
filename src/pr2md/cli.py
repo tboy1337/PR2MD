@@ -1,18 +1,28 @@
 """Command-line interface for GitHub PR extractor."""
 
 import argparse
+import json
 import logging
 import re
 import sys
-from pathlib import Path
 from typing import Optional
 
+import requests
+
 from pr2md.exceptions import GitHubAPIError
+from pr2md.file_io import write_text_atomic
 from pr2md.formatter import MarkdownFormatter
 from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
 from pr2md.reference_downloader import ReferenceDownloader
+from pr2md.validation import (
+    validate_depth,
+    validate_issue_number,
+    validate_output_path,
+    validate_owner,
+    validate_repo,
+)
 
 # Sentinel value for stdout output
 _STDOUT_SENTINEL = "__STDOUT__"
@@ -172,6 +182,10 @@ def parse_arguments(
                 "Invalid arguments. Provide either a GitHub URL or "
                 "owner repo pr/issue number"
             )
+
+        validate_owner(owner)
+        validate_repo(repo)
+        validate_issue_number(number)
     except (ValueError, IndexError) as err:
         logger.error("Error parsing identifier: %s", err)
         sys.exit(1)
@@ -186,14 +200,29 @@ def parse_arguments(
         # -o without filename, use stdout (None value)
         output_path = None
     else:
-        # -o with filename, use provided path
-        output_path = str(args.output)
+        try:
+            output_path = validate_output_path(str(args.output))
+        except ValueError as err:
+            logger.error("%s", err)
+            sys.exit(1)
 
     verbose: bool = bool(args.verbose)
     depth: int = int(args.depth)
     no_references: bool = bool(args.no_references)
 
+    try:
+        validate_depth(depth)
+    except ValueError as err:
+        logger.error("%s", err)
+        sys.exit(1)
+
     return owner, repo, ref_type, number, output_path, verbose, depth, no_references
+
+
+def _log_processing_error(logger: logging.Logger, message: str, verbose: bool) -> None:
+    logger.error(message)
+    if verbose:
+        logger.exception("Full traceback:")
 
 
 def extract_pr_data(
@@ -215,29 +244,33 @@ def extract_pr_data(
     """
     logger = logging.getLogger(__name__)
 
-    # Extract PR data
     try:
-        extractor = GitHubPRExtractor(owner, repo, pr_number)
-        pull_request, comments, reviews, review_comments, diff = extractor.extract_all()
+        with GitHubPRExtractor(owner, repo, pr_number) as extractor:
+            pull_request, comments, reviews, review_comments, diff = (
+                extractor.extract_all()
+            )
     except GitHubAPIError as err:
         logger.error("GitHub API error: %s", err)
         return "", False, None, [], [], []
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        logger.error("Unexpected error: %s", err)
-        if verbose:
-            logger.exception("Full traceback:")
+    except (
+        requests.RequestException,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+    ) as err:
+        _log_processing_error(
+            logger, f"Unexpected error extracting PR data: {err}", verbose
+        )
         return "", False, None, [], [], []
 
-    # Format as Markdown
     try:
         markdown = MarkdownFormatter.format_pr(
             pull_request, comments, reviews, review_comments, diff
         )
         return markdown, True, pull_request, comments, reviews, review_comments
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        logger.error("Error formatting data: %s", err)
-        if verbose:
-            logger.exception("Full traceback:")
+    except (KeyError, ValueError, TypeError) as err:
+        _log_processing_error(logger, f"Error formatting PR data: {err}", verbose)
         return "", False, None, [], [], []
 
 
@@ -258,27 +291,29 @@ def extract_issue_data(
     """
     logger = logging.getLogger(__name__)
 
-    # Extract Issue data
     try:
-        extractor = GitHubIssueExtractor(owner, repo, issue_number)
-        issue, comments = extractor.extract_all()
+        with GitHubIssueExtractor(owner, repo, issue_number) as extractor:
+            issue, comments = extractor.extract_all()
     except GitHubAPIError as err:
         logger.error("GitHub API error: %s", err)
         return "", False, None, []
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        logger.error("Unexpected error: %s", err)
-        if verbose:
-            logger.exception("Full traceback:")
+    except (
+        requests.RequestException,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+    ) as err:
+        _log_processing_error(
+            logger, f"Unexpected error extracting issue data: {err}", verbose
+        )
         return "", False, None, []
 
-    # Format as Markdown
     try:
         markdown = MarkdownFormatter.format_issue(issue, comments)
         return markdown, True, issue, comments
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        logger.error("Error formatting data: %s", err)
-        if verbose:
-            logger.exception("Full traceback:")
+    except (KeyError, ValueError, TypeError) as err:
+        _log_processing_error(logger, f"Error formatting issue data: {err}", verbose)
         return "", False, None, []
 
 
@@ -298,19 +333,70 @@ def write_output(markdown: str, output_path: Optional[str], verbose: bool) -> bo
 
     try:
         if output_path:
-            Path(output_path).write_text(markdown, encoding="utf-8")
+            write_text_atomic(output_path, markdown)
             logger.info("Output written to %s", output_path)
         else:
             print(markdown)  # noqa: T201
         return True
-    except Exception as err:  # pylint: disable=broad-exception-caught
-        logger.error("Error writing output: %s", err)
-        if verbose:
-            logger.exception("Full traceback:")
+    except OSError as err:
+        _log_processing_error(logger, f"Error writing output: {err}", verbose)
         return False
 
 
-def main() -> None:  # pylint: disable=too-many-locals,too-many-branches
+def download_references_if_needed(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    owner: str,
+    repo: str,
+    ref_type: str,
+    number: int,
+    output_path: Optional[str],
+    depth: int,
+    no_references: bool,
+    verbose: bool,
+    pull_request: Optional[PullRequest],
+    issue: Optional[Issue],
+    comments: list[Comment],
+    reviews: list[Review],
+    review_comments: list[ReviewComment],
+) -> None:
+    """Download referenced PRs and issues when auto-naming is used."""
+    logger = logging.getLogger(__name__)
+    type_str = "PR" if ref_type == "pr" else "Issue"
+    using_auto_naming = output_path == f"{type_str}-{number}.md"
+
+    if not using_auto_naming or no_references or not (pull_request or issue):
+        return
+
+    logger.info("Scanning for referenced PRs and issues...")
+
+    with ReferenceDownloader(
+        owner, repo, max_depth=depth, verbose=verbose
+    ) as downloader:
+        if pull_request:
+            references = downloader.extract_references_from_pr(
+                pull_request, comments, reviews, review_comments
+            )
+        else:
+            assert issue is not None
+            references = downloader.extract_references_from_issue(issue, comments)
+
+        if not references:
+            logger.info("No references found in %s", type_str)
+            return
+
+        logger.info("Found %d references to download", len(references))
+        downloaded_files = downloader.download_all_references(references)
+
+        if downloaded_files:
+            logger.info(
+                "Downloaded %d referenced files: %s",
+                len(downloaded_files),
+                ", ".join(downloaded_files),
+            )
+        else:
+            logger.info("No references were successfully downloaded")
+
+
+def main() -> None:
     """Main entry point for the CLI."""
     parser = create_parser()
     owner, repo, ref_type, number, output_path, verbose, depth, no_references = (
@@ -323,13 +409,12 @@ def main() -> None:  # pylint: disable=too-many-locals,too-many-branches
     type_str = "PR" if ref_type == "pr" else "Issue"
     logger.info("Extracting %s %s/%s #%d", type_str, owner, repo, number)
 
-    # Extract data based on type
     if ref_type == "pr":
         markdown, success, pull_request, comments, reviews, review_comments = (
             extract_pr_data(owner, repo, number, verbose)
         )
         issue = None
-    else:  # ref_type == "issue"
+    else:
         markdown, success, issue, comments = extract_issue_data(
             owner, repo, number, verbose
         )
@@ -345,36 +430,21 @@ def main() -> None:  # pylint: disable=too-many-locals,too-many-branches
 
     logger.info("Extraction completed successfully")
 
-    # Download references only if auto-naming is used and not disabled
-    using_auto_naming = output_path == f"{type_str}-{number}.md"
-    if using_auto_naming and not no_references and (pull_request or issue):
-        logger.info("Scanning for referenced PRs and issues...")
-
-        downloader = ReferenceDownloader(owner, repo, max_depth=depth, verbose=verbose)
-
-        # Extract references based on type
-        if pull_request:
-            references = downloader.extract_references_from_pr(
-                pull_request, comments, reviews, review_comments
-            )
-        else:  # issue
-            assert issue is not None  # issue is guaranteed to exist here
-            references = downloader.extract_references_from_issue(issue, comments)
-
-        if references:
-            logger.info("Found %d references to download", len(references))
-            downloaded_files = downloader.download_all_references(references)
-
-            if downloaded_files:
-                logger.info(
-                    "Downloaded %d referenced files: %s",
-                    len(downloaded_files),
-                    ", ".join(downloaded_files),
-                )
-            else:
-                logger.info("No references were successfully downloaded")
-        else:
-            logger.info("No references found in %s", type_str)
+    download_references_if_needed(
+        owner,
+        repo,
+        ref_type,
+        number,
+        output_path,
+        depth,
+        no_references,
+        verbose,
+        pull_request,
+        issue,
+        comments,
+        reviews,
+        review_comments,
+    )
 
 
 if __name__ == "__main__":

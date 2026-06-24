@@ -1,12 +1,10 @@
 """Tests for PR extractor."""
 
-# pylint: disable=protected-access  # testing private methods
-# pylint: disable=duplicate-code  # some duplication in test data is expected
+# pylint: disable=protected-access  # testing private attributes
 
 import pytest
 from pytest_mock import MockerFixture
 
-from pr2md.exceptions import GitHubAPIError
 from pr2md.pr_extractor import GitHubPRExtractor
 
 
@@ -19,75 +17,7 @@ class TestGitHubPRExtractor:
         assert extractor.owner == "owner"
         assert extractor.repo == "repo"
         assert extractor.pr_number == 123
-        assert extractor.base_url == "https://api.github.com"
-
-    def test_make_request_404_error(self, mocker: MockerFixture) -> None:
-        """Test handling of 404 errors."""
-        extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_response = mocker.Mock()
-        mock_response.status_code = 404
-        mock_response.text = "Not Found"
-        mocker.patch.object(extractor.session, "get", return_value=mock_response)
-
-        with pytest.raises(GitHubAPIError, match="Resource not found"):
-            extractor._make_request("/test")
-
-    def test_make_request_403_rate_limit(self, mocker: MockerFixture) -> None:
-        """Test handling of rate limit errors."""
-        extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_response = mocker.Mock()
-        mock_response.status_code = 403
-        mock_response.text = "API rate limit exceeded"
-        mocker.patch.object(extractor.session, "get", return_value=mock_response)
-
-        with pytest.raises(GitHubAPIError, match="rate limit"):
-            extractor._make_request("/test")
-
-    def test_make_request_403_forbidden(self, mocker: MockerFixture) -> None:
-        """Test handling of forbidden errors."""
-        extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_response = mocker.Mock()
-        mock_response.status_code = 403
-        mock_response.text = "Forbidden"
-        mocker.patch.object(extractor.session, "get", return_value=mock_response)
-
-        with pytest.raises(GitHubAPIError, match="Access forbidden"):
-            extractor._make_request("/test")
-
-    def test_make_request_other_error(self, mocker: MockerFixture) -> None:
-        """Test handling of other HTTP errors."""
-        extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_response = mocker.Mock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
-        mocker.patch.object(extractor.session, "get", return_value=mock_response)
-
-        with pytest.raises(GitHubAPIError, match="request failed with status 500"):
-            extractor._make_request("/test")
-
-    def test_make_request_success_json(self, mocker: MockerFixture) -> None:
-        """Test successful JSON request."""
-        extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_response = mocker.Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"key": "value"}
-        mocker.patch.object(extractor.session, "get", return_value=mock_response)
-
-        result = extractor._make_request("/test")
-        assert result == {"key": "value"}
-
-    def test_make_request_success_diff(self, mocker: MockerFixture) -> None:
-        """Test successful diff request."""
-        extractor = GitHubPRExtractor("owner", "repo", 123)
-        mock_response = mocker.Mock()
-        mock_response.status_code = 200
-        mock_response.text = "diff content"
-        mocker.patch.object(extractor.session, "get", return_value=mock_response)
-
-        result = extractor._make_request(
-            "/test", accept_header="application/vnd.github.v3.diff"
-        )
-        assert result == "diff content"
+        assert extractor._client is not None
 
     def test_fetch_pr_details(self, mocker: MockerFixture) -> None:
         """Test fetching PR details."""
@@ -116,7 +46,7 @@ class TestGitHubPRExtractor:
             "head": {"ref": "feature", "sha": "abc123"},
             "base": {"ref": "main", "sha": "def456"},
         }
-        mocker.patch.object(extractor, "_make_request", return_value=mock_data)
+        mocker.patch.object(extractor._client, "get", return_value=mock_data)
 
         pull_request = extractor.fetch_pr_details()
         assert pull_request.number == 123
@@ -140,7 +70,7 @@ class TestGitHubPRExtractor:
                 "html_url": "https://github.com/owner/repo/issues/123#issuecomment-1",
             }
         ]
-        mocker.patch.object(extractor, "_make_request", return_value=mock_data)
+        mocker.patch.object(extractor._client, "get_paginated", return_value=mock_data)
 
         comments = extractor.fetch_comments()
         assert len(comments) == 1
@@ -171,7 +101,7 @@ class TestGitHubPRExtractor:
                 "in_reply_to_id": None,
             }
         ]
-        mocker.patch.object(extractor, "_make_request", return_value=mock_data)
+        mocker.patch.object(extractor._client, "get_paginated", return_value=mock_data)
 
         review_comments = extractor.fetch_review_comments()
         assert len(review_comments) == 1
@@ -198,7 +128,7 @@ class TestGitHubPRExtractor:
                 "commit_id": "abc123",
             }
         ]
-        mocker.patch.object(extractor, "_make_request", return_value=mock_data)
+        mocker.patch.object(extractor._client, "get_paginated", return_value=mock_data)
 
         reviews = extractor.fetch_reviews()
         assert len(reviews) == 1
@@ -208,7 +138,7 @@ class TestGitHubPRExtractor:
         """Test fetching diff."""
         extractor = GitHubPRExtractor("owner", "repo", 123)
         mock_diff = "diff --git a/file.py b/file.py\n--- a/file.py\n+++ b/file.py"
-        mocker.patch.object(extractor, "_make_request", return_value=mock_diff)
+        mocker.patch.object(extractor._client, "get", return_value=mock_diff)
 
         diff = extractor.fetch_diff()
         assert "diff --git" in diff
@@ -217,7 +147,6 @@ class TestGitHubPRExtractor:
         """Test extracting all PR data."""
         extractor = GitHubPRExtractor("owner", "repo", 123)
 
-        # Mock all fetch methods
         mock_pr = mocker.Mock()
         mock_comments = [mocker.Mock()]
         mock_reviews = [mocker.Mock()]
@@ -239,3 +168,9 @@ class TestGitHubPRExtractor:
         assert reviews == mock_reviews
         assert review_comments == mock_review_comments
         assert diff == mock_diff
+
+    def test_context_manager_closes_client(self, mocker: MockerFixture) -> None:
+        """Test that context manager closes the owned client."""
+        with GitHubPRExtractor("owner", "repo", 123) as extractor:
+            mock_close = mocker.patch.object(extractor._client, "close")
+        mock_close.assert_called_once()

@@ -64,7 +64,7 @@ class Comment:
         return cls(
             id=int(data["id"]),
             user=User.from_dict(dict(data["user"])),
-            body=str(data["body"]),
+            body=str(data["body"]) if data.get("body") is not None else "",
             created_at=datetime.fromisoformat(
                 str(data["created_at"]).replace("Z", "+00:00")
             ),

@@ -1,6 +1,6 @@
 # PR2MD - Pull Request to Markdown
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![PyPI version](https://img.shields.io/pypi/v/pr2md.svg)](https://pypi.org/project/pr2md/)
 [![License: CRL](https://img.shields.io/badge/License-CRL-red.svg)](LICENSE.md)
 
@@ -48,7 +48,7 @@ pip install -e .
 
 ### Requirements
 
-- Python 3.13 or higher
+- Python 3.12 or higher
 - `requests` library (automatically installed with pip)
 
 ## Quick Start
@@ -223,22 +223,23 @@ pr2md tboy1337 PR2MD issue 10 -o issue-10-report.md
 
 ## GitHub API Rate Limiting
 
-The tool uses the GitHub REST API without authentication by default. GitHub imposes rate limits:
+The tool uses the GitHub REST API **without authentication**. GitHub imposes rate limits:
 
-- **Unauthenticated requests**: 60 requests per hour
-- **Authenticated requests**: 5,000 requests per hour
+- **Unauthenticated requests**: 60 requests per hour per IP address
+- **Authenticated requests**: 5,000 requests per hour (not supported by PR2MD yet)
 
-For most use cases, unauthenticated access is sufficient as the tool makes only a few API calls per PR. If you encounter rate limiting issues, the tool will provide clear error messages.
+For typical single PR or issue exports, unauthenticated access is usually sufficient. Reference downloading with `--depth` greater than zero consumes additional API calls and can hit the limit sooner. If rate limited, the tool reports a clear error; wait for the limit to reset or reduce `--depth` and export fewer items at once.
 
-**Future Enhancement**: Authentication support is planned for a future release to enable higher rate limits and access to private repositories.
+**Authentication is not implemented.** Private repositories are not supported. Token-based auth may be added in a future release.
 
 ## Limitations
 
-- Currently supports only public GitHub repositories (authentication coming soon)
-- Rate limited by GitHub API (60 requests/hour without authentication)
-- Requires internet connection to fetch data
+- **Public repositories only** — no GitHub token or private-repo support
+- **Rate limited** — 60 API requests per hour without authentication; use `--no-references` or lower `--depth` to reduce usage
+- Requires an internet connection to fetch data
 - Large PRs with extensive diffs may generate very large Markdown files
-- Issues can be downloaded, but PRs accessed via the `/issues/` endpoint will show as issues (use `/pull/` or explicit `pr` type for PRs)
+- Custom output paths (`-o path`) must stay within the current working directory
+- Issues accessed via the `/issues/` URL path are treated as issues; use `/pull/` or explicit `pr` for pull requests
 
 ## License
 

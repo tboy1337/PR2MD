@@ -12,6 +12,7 @@ from pytest_mock import MockerFixture
 
 from pr2md.cli import (
     create_parser,
+    download_references_if_needed,
     extract_issue_data,
     extract_pr_data,
     main,
@@ -21,6 +22,13 @@ from pr2md.cli import (
     write_output,
 )
 from pr2md.exceptions import GitHubAPIError
+
+
+def _mock_extractor_context(mock_extractor: MagicMock) -> MagicMock:
+    """Configure a mock extractor for use as a context manager."""
+    mock_extractor.__enter__.return_value = mock_extractor
+    mock_extractor.__exit__.return_value = False
+    return mock_extractor
 
 
 class TestCLI:
@@ -254,7 +262,7 @@ class TestParseArguments:
             _depth,
             _no_references,
         ) = parse_arguments(parser)
-        assert output_path == "output.md"
+        assert Path(output_path).name == "output.md"
 
     def test_parse_arguments_with_verbose(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with verbose flag."""
@@ -413,6 +421,103 @@ class TestParseArguments:
         assert no_references is True
 
 
+    def test_parse_arguments_invalid_depth(self, mocker: MockerFixture) -> None:
+        """Test parsing arguments with invalid depth."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "owner", "repo", "pr", "123", "--depth", "-1"],
+        )
+        with pytest.raises(SystemExit):
+            parse_arguments(parser)
+
+    def test_parse_arguments_invalid_owner(self, mocker: MockerFixture) -> None:
+        """Test parsing arguments with invalid owner characters."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "bad owner", "repo", "pr", "123"],
+        )
+        with pytest.raises(SystemExit):
+            parse_arguments(parser)
+
+    def test_parse_arguments_output_outside_cwd(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """Test parsing arguments with output path outside CWD."""
+        parser = create_parser()
+        outside = tmp_path / "outside.md"
+        mocker.patch.object(
+            sys,
+            "argv",
+            [
+                "pr2md",
+                "owner",
+                "repo",
+                "pr",
+                "123",
+                "-o",
+                str(outside),
+            ],
+        )
+        with pytest.raises(SystemExit):
+            parse_arguments(parser)
+
+
+class TestDownloadReferencesIfNeeded:
+    """Tests for reference download orchestration."""
+
+    def test_download_references_when_auto_naming(self, mocker: MockerFixture) -> None:
+        """Test reference download is triggered for auto-named output."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+        instance = mock_downloader.return_value.__enter__.return_value
+        instance.extract_references_from_pr.return_value = set()
+        mock_pr = MagicMock()
+
+        download_references_if_needed(
+            "owner",
+            "repo",
+            "pr",
+            123,
+            "PR-123.md",
+            2,
+            False,
+            False,
+            mock_pr,
+            None,
+            [],
+            [],
+            [],
+        )
+
+        instance.extract_references_from_pr.assert_called_once()
+
+    def test_skips_when_no_references_flag(self, mocker: MockerFixture) -> None:
+        """Test reference download is skipped with --no-references."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+        mock_pr = MagicMock()
+
+        download_references_if_needed(
+            "owner",
+            "repo",
+            "pr",
+            123,
+            "PR-123.md",
+            2,
+            True,
+            False,
+            mock_pr,
+            None,
+            [],
+            [],
+            [],
+        )
+
+        mock_downloader.assert_not_called()
+
+
 class TestExtractPRData:
     """Tests for extract_pr_data function."""
 
@@ -427,6 +532,7 @@ class TestExtractPRData:
             [],
             "diff content",
         )
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
         mocker.patch("pr2md.cli.MarkdownFormatter.format_pr", return_value="# Markdown")
 
@@ -444,6 +550,7 @@ class TestExtractPRData:
         """Test PR data extraction with API error."""
         mock_extractor = MagicMock()
         mock_extractor.extract_all.side_effect = GitHubAPIError("API Error")
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
 
         markdown, success, pull_request, comments, reviews, review_comments = (
@@ -459,7 +566,8 @@ class TestExtractPRData:
     def test_extract_pr_data_unexpected_error(self, mocker: MockerFixture) -> None:
         """Test PR data extraction with unexpected error."""
         mock_extractor = MagicMock()
-        mock_extractor.extract_all.side_effect = Exception("Unexpected error")
+        mock_extractor.extract_all.side_effect = ValueError("Unexpected error")
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
 
         markdown, success, pull_request, comments, reviews, review_comments = (
@@ -477,7 +585,8 @@ class TestExtractPRData:
     ) -> None:
         """Test PR data extraction with unexpected error in verbose mode."""
         mock_extractor = MagicMock()
-        mock_extractor.extract_all.side_effect = Exception("Unexpected error")
+        mock_extractor.extract_all.side_effect = ValueError("Unexpected error")
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
 
         markdown, success, pull_request, comments, reviews, review_comments = (
@@ -501,10 +610,11 @@ class TestExtractPRData:
             [],
             "diff content",
         )
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
         mocker.patch(
             "pr2md.cli.MarkdownFormatter.format_pr",
-            side_effect=Exception("Format error"),
+            side_effect=TypeError("Format error"),
         )
 
         markdown, success, pull_request, comments, reviews, review_comments = (
@@ -528,10 +638,11 @@ class TestExtractPRData:
             [],
             "diff content",
         )
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubPRExtractor", return_value=mock_extractor)
         mocker.patch(
             "pr2md.cli.MarkdownFormatter.format_pr",
-            side_effect=Exception("Format error"),
+            side_effect=TypeError("Format error"),
         )
 
         markdown, success, pull_request, comments, reviews, review_comments = (
@@ -553,6 +664,7 @@ class TestExtractIssueData:
         mock_issue = MagicMock()
         mock_extractor = MagicMock()
         mock_extractor.extract_all.return_value = (mock_issue, [])
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubIssueExtractor", return_value=mock_extractor)
         mocker.patch(
             "pr2md.cli.MarkdownFormatter.format_issue", return_value="# Issue Markdown"
@@ -570,6 +682,7 @@ class TestExtractIssueData:
         """Test Issue data extraction with API error."""
         mock_extractor = MagicMock()
         mock_extractor.extract_all.side_effect = GitHubAPIError("API Error")
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubIssueExtractor", return_value=mock_extractor)
 
         markdown, success, issue, comments = extract_issue_data(
@@ -583,7 +696,8 @@ class TestExtractIssueData:
     def test_extract_issue_data_unexpected_error(self, mocker: MockerFixture) -> None:
         """Test Issue data extraction with unexpected error."""
         mock_extractor = MagicMock()
-        mock_extractor.extract_all.side_effect = Exception("Unexpected error")
+        mock_extractor.extract_all.side_effect = ValueError("Unexpected error")
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubIssueExtractor", return_value=mock_extractor)
 
         markdown, success, issue, comments = extract_issue_data(
@@ -599,10 +713,11 @@ class TestExtractIssueData:
         mock_issue = MagicMock()
         mock_extractor = MagicMock()
         mock_extractor.extract_all.return_value = (mock_issue, [])
+        _mock_extractor_context(mock_extractor)
         mocker.patch("pr2md.cli.GitHubIssueExtractor", return_value=mock_extractor)
         mocker.patch(
             "pr2md.cli.MarkdownFormatter.format_issue",
-            side_effect=Exception("Format error"),
+            side_effect=TypeError("Format error"),
         )
 
         markdown, success, issue, comments = extract_issue_data(
@@ -638,7 +753,7 @@ class TestWriteOutput:
     def test_write_output_file_error(self, mocker: MockerFixture) -> None:
         """Test writing output with file error."""
         markdown = "# Test Markdown"
-        mocker.patch("pathlib.Path.write_text", side_effect=Exception("Write error"))
+        mocker.patch("pr2md.cli.write_text_atomic", side_effect=OSError("Write error"))
 
         success = write_output(markdown, "/invalid/path/output.md", False)
         assert success is False
@@ -646,7 +761,7 @@ class TestWriteOutput:
     def test_write_output_file_error_verbose(self, mocker: MockerFixture) -> None:
         """Test writing output with file error in verbose mode."""
         markdown = "# Test Markdown"
-        mocker.patch("pathlib.Path.write_text", side_effect=Exception("Write error"))
+        mocker.patch("pr2md.cli.write_text_atomic", side_effect=OSError("Write error"))
 
         success = write_output(markdown, "/invalid/path/output.md", True)
         assert success is False

@@ -1,11 +1,15 @@
 """Orchestrate downloading of referenced issues and pull requests."""
 
+import json
 import logging
-from pathlib import Path
 from typing import Literal, Optional
 
+import requests
+
 from pr2md.exceptions import GitHubAPIError
+from pr2md.file_io import write_text_atomic
 from pr2md.formatter import MarkdownFormatter
+from pr2md.github_client import GitHubClient
 from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
@@ -23,6 +27,7 @@ class ReferenceDownloader:
         base_repo: str,
         max_depth: int = 2,
         verbose: bool = False,
+        client: Optional[GitHubClient] = None,
     ) -> None:
         """
         Initialize the reference downloader.
@@ -32,6 +37,7 @@ class ReferenceDownloader:
             base_repo: Name of the base repository
             max_depth: Maximum recursion depth (0 = no recursion)
             verbose: Enable verbose logging
+            client: Optional shared GitHub API client
         """
         self.base_owner = base_owner
         self.base_repo = base_repo
@@ -39,12 +45,30 @@ class ReferenceDownloader:
         self.verbose = verbose
         self.parser = ReferenceParser(base_owner, base_repo)
         self.downloaded: set[GitHubReference] = set()
+        self._owns_client = client is None
+        self._client = client or GitHubClient()
         logger.info(
             "Initialized ReferenceDownloader for %s/%s with max_depth=%d",
             base_owner,
             base_repo,
             max_depth,
         )
+
+    def __enter__(self) -> "ReferenceDownloader":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[object],
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying API client if owned by this downloader."""
+        if self._owns_client:
+            self._client.close()
 
     def generate_filename(
         self, ref_type: Literal["issue", "pr"], owner: str, repo: str, number: int
@@ -90,18 +114,14 @@ class ReferenceDownloader:
         logger.debug("Extracting references from PR #%d", pull_request.number)
         references: set[GitHubReference] = set()
 
-        # Parse PR body
         references.update(self.parser.parse_references(pull_request.body))
 
-        # Parse comments
         for comment in comments:
             references.update(self.parser.parse_references(comment.body))
 
-        # Parse reviews
         for review in reviews:
             references.update(self.parser.parse_references(review.body))
 
-        # Parse review comments
         for review_comment in review_comments:
             references.update(self.parser.parse_references(review_comment.body))
 
@@ -126,10 +146,8 @@ class ReferenceDownloader:
         logger.debug("Extracting references from Issue #%d", issue.number)
         references: set[GitHubReference] = set()
 
-        # Parse issue body
         references.update(self.parser.parse_references(issue.body))
 
-        # Parse comments
         for comment in comments:
             references.update(self.parser.parse_references(comment.body))
 
@@ -154,10 +172,12 @@ class ReferenceDownloader:
         logger.info("Downloading PR %s/%s #%d", owner, repo, pr_number)
 
         try:
-            extractor = GitHubPRExtractor(owner, repo, pr_number)
-            pull_request, comments, reviews, review_comments, diff = (
-                extractor.extract_all()
-            )
+            with GitHubPRExtractor(
+                owner, repo, pr_number, client=self._client
+            ) as extractor:
+                pull_request, comments, reviews, review_comments, diff = (
+                    extractor.extract_all()
+                )
 
             markdown = MarkdownFormatter.format_pr(
                 pull_request, comments, reviews, review_comments, diff
@@ -173,7 +193,14 @@ class ReferenceDownloader:
                 "Failed to download PR %s/%s #%d: %s", owner, repo, pr_number, err
             )
             return "", None
-        except Exception as err:  # pylint: disable=broad-exception-caught
+        except (
+            requests.RequestException,
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ) as err:
             logger.error(
                 "Unexpected error downloading PR %s/%s #%d: %s",
                 owner,
@@ -203,8 +230,10 @@ class ReferenceDownloader:
         logger.info("Downloading Issue %s/%s #%d", owner, repo, issue_number)
 
         try:
-            extractor = GitHubIssueExtractor(owner, repo, issue_number)
-            issue, comments = extractor.extract_all()
+            with GitHubIssueExtractor(
+                owner, repo, issue_number, client=self._client
+            ) as extractor:
+                issue, comments = extractor.extract_all()
 
             markdown = MarkdownFormatter.format_issue(issue, comments)
 
@@ -220,7 +249,14 @@ class ReferenceDownloader:
                 err,
             )
             return "", None
-        except Exception as err:  # pylint: disable=broad-exception-caught
+        except (
+            requests.RequestException,
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ) as err:
             logger.error(
                 "Unexpected error downloading Issue %s/%s #%d: %s",
                 owner,
@@ -236,7 +272,7 @@ class ReferenceDownloader:
         self, owner: str, repo: str, number: int
     ) -> Optional[Literal["issue", "pr"]]:
         """
-        Determine if a reference is an issue or PR by attempting to fetch it.
+        Determine if a reference is an issue or PR.
 
         Args:
             owner: Repository owner
@@ -246,26 +282,15 @@ class ReferenceDownloader:
         Returns:
             'pr' if it's a pull request, 'issue' if it's an issue, None if not found
         """
-        # Try as PR first
-        try:
-            extractor = GitHubPRExtractor(owner, repo, number)
-            extractor.fetch_pr_details()
-            return "pr"
-        except GitHubAPIError:
-            pass
-
-        # Try as issue
-        try:
-            extractor_issue = GitHubIssueExtractor(owner, repo, number)
-            extractor_issue.fetch_issue_details()
-            return "issue"
-        except GitHubAPIError:
-            pass
-
-        logger.warning(
-            "Could not determine type for %s/%s #%d (not found)", owner, repo, number
-        )
-        return None
+        ref_type = self._client.fetch_issue_or_pr_type(owner, repo, number)
+        if ref_type is None:
+            logger.warning(
+                "Could not determine type for %s/%s #%d (not found)",
+                owner,
+                repo,
+                number,
+            )
+        return ref_type
 
     def download_reference(
         self, reference: GitHubReference, current_depth: int
@@ -280,7 +305,6 @@ class ReferenceDownloader:
         Returns:
             List of filenames that were downloaded
         """
-        # Check if already downloaded
         if reference in self.downloaded:
             logger.debug(
                 "Skipping already downloaded reference: %s/%s %s #%d",
@@ -291,7 +315,6 @@ class ReferenceDownloader:
             )
             return []
 
-        # Check depth limit
         if current_depth > self.max_depth:
             logger.debug(
                 "Skipping reference due to depth limit: %s/%s %s #%d",
@@ -302,7 +325,6 @@ class ReferenceDownloader:
             )
             return []
 
-        # Determine actual ref type if not from URL
         ref_type = reference.ref_type
         if ref_type == "pr" and not self._is_from_url(reference):
             actual_type = self.determine_ref_type(
@@ -311,7 +333,6 @@ class ReferenceDownloader:
             if actual_type is None:
                 return []
             ref_type = actual_type
-            # Update reference with correct type
             reference = GitHubReference(
                 ref_type=ref_type,
                 owner=reference.owner,
@@ -319,10 +340,8 @@ class ReferenceDownloader:
                 number=reference.number,
             )
 
-        # Mark as downloaded
         self.downloaded.add(reference)
 
-        # Download the reference
         if ref_type == "pr":
             markdown, found_refs = self.download_pr(
                 reference.owner, reference.repo, reference.number
@@ -335,20 +354,18 @@ class ReferenceDownloader:
         if not markdown:
             return []
 
-        # Save to file
         filename = self.generate_filename(
             ref_type, reference.owner, reference.repo, reference.number
         )
         try:
-            Path(filename).write_text(markdown, encoding="utf-8")
+            write_text_atomic(filename, markdown)
             logger.info("Saved %s", filename)
-        except Exception as err:  # pylint: disable=broad-exception-caught
+        except OSError as err:
             logger.error("Failed to save %s: %s", filename, err)
             return []
 
         downloaded_files = [filename]
 
-        # Recursively download references found in this reference
         if found_refs and current_depth < self.max_depth:
             for found_ref in found_refs:
                 downloaded_files.extend(
@@ -361,17 +378,12 @@ class ReferenceDownloader:
         """
         Check if a reference was parsed from a URL.
 
-        This is a heuristic - URL-based references have explicit type info,
-        so we trust them. Non-URL references need verification.
-
         Args:
             _reference: GitHubReference to check (currently unused)
 
         Returns:
             True if from URL (trustworthy type), False otherwise
         """
-        # This is a simplified heuristic. In practice, we always verify
-        # non-URL references by attempting to fetch them.
         return False
 
     def download_all_references(self, references: set[GitHubReference]) -> list[str]:

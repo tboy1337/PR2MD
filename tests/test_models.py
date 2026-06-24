@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from pr2md.models import Comment, Label, PullRequest, Review, ReviewComment, User
+from pr2md.models import Comment, Issue, Label, PullRequest, Review, ReviewComment, User
 
 
 class TestUser:
@@ -74,6 +74,80 @@ class TestComment:
         assert comment.body == "This is a comment"
         assert isinstance(comment.created_at, datetime)
         assert isinstance(comment.updated_at, datetime)
+
+    def test_from_dict_null_body(self) -> None:
+        """Test Comment creation when body is null."""
+        data = {
+            "id": 456,
+            "user": {
+                "login": "commenter",
+                "id": 789,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/commenter",
+            },
+            "body": None,
+            "created_at": "2025-01-01T12:00:00Z",
+            "updated_at": "2025-01-01T12:30:00Z",
+            "html_url": "https://github.com/owner/repo/issues/1#issuecomment-456",
+        }
+        comment = Comment.from_dict(data)
+        assert comment.body == ""
+
+
+class TestIssue:
+    """Tests for Issue model."""
+
+    def test_from_dict(self) -> None:
+        """Test Issue creation from dictionary."""
+        data = {
+            "number": 42,
+            "title": "Bug report",
+            "body": "Steps to reproduce",
+            "state": "open",
+            "user": {
+                "login": "reporter",
+                "id": 1,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/reporter",
+            },
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-02T00:00:00Z",
+            "closed_at": None,
+            "html_url": "https://github.com/owner/repo/issues/42",
+            "labels": [],
+        }
+        issue = Issue.from_dict(data)
+        assert issue.number == 42
+        assert issue.title == "Bug report"
+        assert issue.body == "Steps to reproduce"
+        assert issue.closed_at is None
+
+    def test_from_dict_closed_with_labels(self) -> None:
+        """Test closed Issue with labels."""
+        data = {
+            "number": 7,
+            "title": "Closed issue",
+            "body": None,
+            "state": "closed",
+            "user": {
+                "login": "reporter",
+                "id": 1,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/reporter",
+            },
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-02T00:00:00Z",
+            "closed_at": "2025-01-03T00:00:00Z",
+            "html_url": "https://github.com/owner/repo/issues/7",
+            "labels": [
+                {"name": "bug", "color": "d73a4a", "description": "Bug"},
+            ],
+        }
+        issue = Issue.from_dict(data)
+        assert issue.state == "closed"
+        assert issue.body is None
+        assert issue.closed_at is not None
+        assert issue.labels[0].name == "bug"
 
 
 class TestReviewComment:

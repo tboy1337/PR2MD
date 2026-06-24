@@ -1,6 +1,7 @@
 """Tests for reference downloader."""
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -133,7 +134,7 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
 
         # Mock the extractor
-        mock_extractor = mocker.Mock()
+        mock_extractor = MagicMock()
         mock_extractor.extract_all.return_value = (
             mocker.Mock(
                 number=1,
@@ -161,6 +162,7 @@ class TestReferenceDownloader:
             [],
             "diff",
         )
+        mock_extractor.__enter__.return_value = mock_extractor
 
         mocker.patch(
             "pr2md.reference_downloader.GitHubPRExtractor",
@@ -176,8 +178,11 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
 
         # Mock the extractor to raise an exception
-        mock_extractor = mocker.Mock()
-        mock_extractor.extract_all.side_effect = Exception("API Error")
+        mock_extractor = MagicMock()
+        mock_extractor.extract_all.side_effect = ValueError("API Error")
+
+        mock_extractor.__enter__.return_value = mock_extractor
+        mock_extractor.__exit__.return_value = False
 
         mocker.patch(
             "pr2md.reference_downloader.GitHubPRExtractor",
@@ -193,7 +198,7 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
 
         # Mock the extractor
-        mock_extractor = mocker.Mock()
+        mock_extractor = MagicMock()
         mock_extractor.extract_all.return_value = (
             mocker.Mock(
                 number=1,
@@ -209,6 +214,7 @@ class TestReferenceDownloader:
             ),
             [],
         )
+        mock_extractor.__enter__.return_value = mock_extractor
 
         mocker.patch(
             "pr2md.reference_downloader.GitHubIssueExtractor",
@@ -224,8 +230,11 @@ class TestReferenceDownloader:
         downloader = ReferenceDownloader("owner", "repo")
 
         # Mock the extractor to raise an exception
-        mock_extractor = mocker.Mock()
-        mock_extractor.extract_all.side_effect = Exception("API Error")
+        mock_extractor = MagicMock()
+        mock_extractor.extract_all.side_effect = ValueError("API Error")
+
+        mock_extractor.__enter__.return_value = mock_extractor
+        mock_extractor.__exit__.return_value = False
 
         mocker.patch(
             "pr2md.reference_downloader.GitHubIssueExtractor",
@@ -239,14 +248,10 @@ class TestReferenceDownloader:
     def test_determine_ref_type_pr(self, mocker: MockerFixture) -> None:
         """Test determining reference type for PR."""
         downloader = ReferenceDownloader("owner", "repo")
-
-        # Mock successful PR fetch
-        mock_extractor = mocker.Mock()
-        mock_extractor.fetch_pr_details.return_value = mocker.Mock()
-
-        mocker.patch(
-            "pr2md.reference_downloader.GitHubPRExtractor",
-            return_value=mock_extractor,
+        mocker.patch.object(
+            downloader._client,
+            "fetch_issue_or_pr_type",
+            return_value="pr",
         )
 
         ref_type = downloader.determine_ref_type("owner", "repo", 1)
@@ -255,22 +260,10 @@ class TestReferenceDownloader:
     def test_determine_ref_type_issue(self, mocker: MockerFixture) -> None:
         """Test determining reference type for issue."""
         downloader = ReferenceDownloader("owner", "repo")
-
-        # Mock PR fetch failure
-        mock_pr_extractor = mocker.Mock()
-        mock_pr_extractor.fetch_pr_details.side_effect = GitHubAPIError("Not a PR")
-
-        # Mock successful issue fetch
-        mock_issue_extractor = mocker.Mock()
-        mock_issue_extractor.fetch_issue_details.return_value = mocker.Mock()
-
-        mocker.patch(
-            "pr2md.reference_downloader.GitHubPRExtractor",
-            return_value=mock_pr_extractor,
-        )
-        mocker.patch(
-            "pr2md.reference_downloader.GitHubIssueExtractor",
-            return_value=mock_issue_extractor,
+        mocker.patch.object(
+            downloader._client,
+            "fetch_issue_or_pr_type",
+            return_value="issue",
         )
 
         ref_type = downloader.determine_ref_type("owner", "repo", 1)
@@ -279,23 +272,10 @@ class TestReferenceDownloader:
     def test_determine_ref_type_not_found(self, mocker: MockerFixture) -> None:
         """Test determining reference type when not found."""
         downloader = ReferenceDownloader("owner", "repo")
-
-        # Mock both fetch failures
-        mock_pr_extractor = mocker.Mock()
-        mock_pr_extractor.fetch_pr_details.side_effect = GitHubAPIError("Not found")
-
-        mock_issue_extractor = mocker.Mock()
-        mock_issue_extractor.fetch_issue_details.side_effect = GitHubAPIError(
-            "Not found"
-        )
-
-        mocker.patch(
-            "pr2md.reference_downloader.GitHubPRExtractor",
-            return_value=mock_pr_extractor,
-        )
-        mocker.patch(
-            "pr2md.reference_downloader.GitHubIssueExtractor",
-            return_value=mock_issue_extractor,
+        mocker.patch.object(
+            downloader._client,
+            "fetch_issue_or_pr_type",
+            return_value=None,
         )
 
         ref_type = downloader.determine_ref_type("owner", "repo", 1)
@@ -336,7 +316,7 @@ class TestReferenceDownloader:
         )
 
         # Mock file write
-        mock_write = mocker.patch("pathlib.Path.write_text")
+        mock_write = mocker.patch("pr2md.reference_downloader.write_text_atomic")
 
         files = downloader.download_reference(ref, current_depth=1)
         assert len(files) == 1
@@ -361,3 +341,49 @@ class TestReferenceDownloader:
         assert len(files) == 2
         assert "PR-1.md" in files
         assert "Issue-2.md" in files
+
+    def test_download_reference_recursive(
+        self, mocker: MockerFixture, sample_user: User
+    ) -> None:
+        """Test recursive reference download."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=2)
+        child_ref = GitHubReference(
+            ref_type="issue", owner="owner", repo="repo", number=2
+        )
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+
+        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader,
+            "download_pr",
+            return_value=("# PR", {child_ref}),
+        )
+        mocker.patch.object(
+            downloader,
+            "download_issue",
+            return_value=("# Issue", set()),
+        )
+        mocker.patch("pr2md.reference_downloader.write_text_atomic")
+
+        files = downloader.download_reference(ref, current_depth=1)
+        assert "PR-1.md" in files
+        assert "Issue-2.md" in files
+
+    def test_download_reference_write_failure(self, mocker: MockerFixture) -> None:
+        """Test reference download when file write fails."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=2)
+        ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
+
+        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader,
+            "download_pr",
+            return_value=("# Test PR", set()),
+        )
+        mocker.patch(
+            "pr2md.reference_downloader.write_text_atomic",
+            side_effect=OSError("disk full"),
+        )
+
+        files = downloader.download_reference(ref, current_depth=1)
+        assert files == []

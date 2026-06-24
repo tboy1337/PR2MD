@@ -83,3 +83,23 @@ class TestIntegration:
         diff = extractor.fetch_diff()
         assert isinstance(diff, str)
         assert len(diff) > 0
+
+    @pytest.mark.timeout(60)
+    def test_extract_real_issue(self) -> None:
+        """Test extracting a real issue from psf/requests."""
+        from pr2md.issue_extractor import GitHubIssueExtractor
+
+        extractor = GitHubIssueExtractor("psf", "requests", 1)
+        issue, comments = extractor.extract_all()
+
+        assert issue.number == 1
+        assert issue.title is not None
+        assert len(issue.title) > 0
+        assert isinstance(comments, list)
+
+        from pr2md.formatter import MarkdownFormatter
+
+        markdown = MarkdownFormatter.format_issue(issue, comments)
+        assert "# " in markdown
+        assert "## Description" in markdown
+        assert "## Conversation Thread" in markdown

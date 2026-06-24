@@ -2,6 +2,7 @@
 
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 
@@ -142,10 +143,14 @@ class MarkdownFormatter:
         if not reviews:
             return "## Reviews\n\n*No reviews submitted.*"
 
-        # Sort by submission time
+        # Sort by submission time; reviews without timestamps sort first
         sorted_reviews = sorted(
             reviews,
-            key=lambda r: r.submitted_at if r.submitted_at else r.user.login,
+            key=lambda r: (
+                r.submitted_at
+                if r.submitted_at is not None
+                else datetime.min.replace(tzinfo=timezone.utc)
+            ),
         )
 
         # Group reviews by user to detect status progressions

@@ -9,7 +9,7 @@ persistent = yes
 unsafe-load-any-extension = no
 
 # Minimum Python version
-py-version = 3.13
+py-version = 3.12
 
 [MESSAGES CONTROL]
 # Disable warnings that don't apply to this project:

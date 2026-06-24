@@ -323,6 +323,62 @@ class TestMarkdownFormatter:
         assert "File: `src/file.py`" in formatted
         assert "This needs improvement" in formatted
 
+    def test_format_review_comments_in_reply_to(self, sample_user: User) -> None:
+        """Test review comment reply formatting."""
+        review_comment = ReviewComment(
+            id=1000,
+            user=sample_user,
+            body="Reply text",
+            path="src/file.py",
+            position=10,
+            original_position=10,
+            commit_id="abc123",
+            original_commit_id="abc123",
+            diff_hunk="@@ -1 +1 @@",
+            created_at=datetime(2025, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 1, 1, 14, 0, 0, tzinfo=timezone.utc),
+            html_url="https://github.com/owner/repo/pull/1#discussion_r1000",
+            in_reply_to_id=999,
+        )
+        formatted = MarkdownFormatter._format_review_comments([review_comment])
+        assert "in reply to comment #999" in formatted
+
+    def test_format_header_closed_not_merged(self, sample_pr: PullRequest) -> None:
+        """Test PR header when closed but not merged."""
+        sample_pr.state = "closed"
+        sample_pr.closed_at = datetime(2025, 1, 3, 12, 0, 0, tzinfo=timezone.utc)
+        sample_pr.merged_at = None
+        header = MarkdownFormatter._format_header(sample_pr)
+        assert "**Status:** CLOSED" in header
+        assert "**Closed:**" in header
+        assert "**Merged:**" not in header
+
+    def test_format_reviews_with_null_submitted_at(self, sample_user: User) -> None:
+        """Test review sorting when submitted_at is None."""
+        reviews = [
+            Review(
+                id=1,
+                user=sample_user,
+                body="Pending",
+                state="PENDING",
+                html_url="https://example.com/review/1",
+                submitted_at=None,
+                commit_id="abc",
+            ),
+            Review(
+                id=2,
+                user=sample_user,
+                body="Approved",
+                state="APPROVED",
+                html_url="https://example.com/review/2",
+                submitted_at=datetime(2025, 1, 2, 10, 0, 0, tzinfo=timezone.utc),
+                commit_id="abc",
+            ),
+        ]
+        formatted = MarkdownFormatter._format_reviews(reviews)
+        assert "Approved" in formatted
+        assert "Pending" in formatted
+
     def test_is_comment_resolved(self, sample_review_comment: ReviewComment) -> None:
         """Test resolved comment detection."""
         # Currently always returns False due to API limitations

@@ -3,7 +3,6 @@
 
 # Core Testing Packages
 pytest
-pytest-asyncio
 pytest-timeout
 pytest-xdist
 pytest-mock
