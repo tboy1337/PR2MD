@@ -81,7 +81,7 @@ class ReviewComment:
 
     id: int
     user: User
-    body: str
+    body: Optional[str]
     path: str
     position: Optional[int]
     original_position: Optional[int]
@@ -104,7 +104,7 @@ class ReviewComment:
         return cls(
             id=int(data["id"]),
             user=User.from_dict(dict(data["user"])),
-            body=str(data["body"]),
+            body=str(data["body"]) if data.get("body") is not None else None,
             path=str(data["path"]),
             position=int(data["position"]) if data.get("position") else None,
             original_position=(

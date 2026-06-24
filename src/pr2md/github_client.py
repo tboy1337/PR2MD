@@ -15,6 +15,8 @@ _RETRYABLE_STATUS_CODES = {502, 503, 504}
 _MAX_RETRIES = 3
 _REQUEST_TIMEOUT = 30
 _PER_PAGE = 100
+_MAX_PAGES = 50
+_MAX_ERROR_BODY_LENGTH = 500
 
 
 def _parse_next_link(link_header: Optional[str]) -> Optional[str]:
@@ -106,8 +108,15 @@ class GitHubClient:
             f"{self.base_url}{endpoint}{separator}per_page={_PER_PAGE}"
         )
         items: list[Any] = []
+        page_count = 0
 
         while url:
+            page_count += 1
+            if page_count > _MAX_PAGES:
+                logger.warning(
+                    "Pagination truncated at %d pages for %s", _MAX_PAGES, endpoint
+                )
+                break
             logger.debug("Fetching paginated URL %s", url)
             response = self._request_with_retries(url)
             self._raise_for_status(response, url)
@@ -198,7 +207,10 @@ class GitHubClient:
                 )
             raise GitHubAPIError(f"Access forbidden: {url}")
         if response.status_code != 200:
+            body = response.text
+            if len(body) > _MAX_ERROR_BODY_LENGTH:
+                body = f"{body[:_MAX_ERROR_BODY_LENGTH]}... (truncated)"
             raise GitHubAPIError(
                 f"GitHub API request failed with status {response.status_code}: "
-                f"{response.text}"
+                f"{body}"
             )

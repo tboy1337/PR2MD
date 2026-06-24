@@ -269,7 +269,7 @@ class MarkdownFormatter:
 ```
 
 **Comment:**
-{comment.body}
+{comment.body or ""}
 
 *[View on GitHub]({comment.html_url})*"""
                 # pylint: enable=line-too-long

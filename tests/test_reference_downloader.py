@@ -387,3 +387,9 @@ class TestReferenceDownloader:
 
         files = downloader.download_reference(ref, current_depth=1)
         assert files == []
+
+    def test_context_manager_closes_client(self, mocker: MockerFixture) -> None:
+        """Test that context manager closes the owned client."""
+        with ReferenceDownloader("owner", "repo", max_depth=1) as downloader:
+            mock_close = mocker.patch.object(downloader._client, "close")
+        mock_close.assert_called_once()

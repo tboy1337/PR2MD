@@ -5,6 +5,7 @@
 import pytest
 from pytest_mock import MockerFixture
 
+from pr2md.exceptions import GitHubAPIError
 from pr2md.pr_extractor import GitHubPRExtractor
 
 
@@ -174,3 +175,15 @@ class TestGitHubPRExtractor:
         with GitHubPRExtractor("owner", "repo", 123) as extractor:
             mock_close = mocker.patch.object(extractor._client, "close")
         mock_close.assert_called_once()
+
+    def test_fetch_pr_details_api_error(self, mocker: MockerFixture) -> None:
+        """Test API errors propagate from fetch_pr_details."""
+        extractor = GitHubPRExtractor("owner", "repo", 123)
+        mocker.patch.object(
+            extractor._client,
+            "get",
+            side_effect=GitHubAPIError("Resource not found"),
+        )
+
+        with pytest.raises(GitHubAPIError, match="Resource not found"):
+            extractor.fetch_pr_details()

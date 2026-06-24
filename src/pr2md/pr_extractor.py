@@ -8,6 +8,8 @@ from pr2md.models import Comment, PullRequest, Review, ReviewComment
 
 logger = logging.getLogger(__name__)
 
+_DIFF_SIZE_WARNING_BYTES = 5 * 1024 * 1024
+
 
 class GitHubPRExtractor:
     """Extract Pull Request data from GitHub API."""
@@ -132,6 +134,12 @@ class GitHubPRExtractor:
         diff: str = self._client.get(
             endpoint, accept="application/vnd.github.v3.diff"
         )
+        diff_size = len(diff.encode("utf-8"))
+        if diff_size > _DIFF_SIZE_WARNING_BYTES:
+            logger.warning(
+                "PR diff is large (%d bytes); this may use significant memory",
+                diff_size,
+            )
         logger.info("Fetched diff (%d bytes)", len(diff))
         return diff
 

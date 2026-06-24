@@ -7,7 +7,7 @@ import requests
 from pytest_mock import MockerFixture
 
 from pr2md.exceptions import GitHubAPIError
-from pr2md.github_client import GitHubClient, _parse_next_link
+from pr2md.github_client import GitHubClient, _MAX_PAGES, _parse_next_link
 
 
 class TestParseNextLink:
@@ -190,3 +190,70 @@ class TestGitHubClient:
         with GitHubClient() as client:
             mock_close = mocker.patch.object(client.session, "close")
         mock_close.assert_called_once()
+
+    def test_get_paginated_non_list_response(self, mocker: MockerFixture) -> None:
+        """Test paginated fetch rejects non-list JSON."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"unexpected": True}
+        mock_response.headers = {}
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with pytest.raises(GitHubAPIError, match="Expected paginated list"):
+            client.get_paginated("/repos/o/r/issues/1/comments")
+        client.close()
+
+    def test_get_retries_exhausted_on_502(self, mocker: MockerFixture) -> None:
+        """Test retry exhaustion on persistent 502."""
+        client = GitHubClient()
+        fail_response = mocker.Mock()
+        fail_response.status_code = 502
+        fail_response.text = "Bad Gateway"
+        mocker.patch.object(client.session, "get", return_value=fail_response)
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        with pytest.raises(GitHubAPIError, match="request failed with status 502"):
+            client.get("/repos/o/r")
+        client.close()
+
+    def test_get_paginated_page_cap(self, mocker: MockerFixture) -> None:
+        """Test pagination stops at the configured page cap."""
+        client = GitHubClient()
+
+        def make_page(page_id: int) -> object:
+            page = mocker.Mock()
+            page.status_code = 200
+            page.json.return_value = [{"id": page_id}]
+            page.headers = {
+                "Link": '<https://api.github.com/next>; rel="next"'
+            }
+            return page
+
+        pages = [make_page(i) for i in range(_MAX_PAGES + 5)]
+        mocker.patch.object(client.session, "get", side_effect=pages)
+
+        items = client.get_paginated("/repos/o/r/issues/1/comments")
+        assert len(items) == _MAX_PAGES
+        client.close()
+
+    def test_get_truncates_large_error_body(self, mocker: MockerFixture) -> None:
+        """Test error messages truncate very large response bodies."""
+        client = GitHubClient()
+        mock_response = mocker.Mock()
+        mock_response.status_code = 500
+        mock_response.text = "x" * 1000
+        mocker.patch.object(client.session, "get", return_value=mock_response)
+
+        with pytest.raises(GitHubAPIError) as exc_info:
+            client.get("/repos/o/r")
+        assert "truncated" in str(exc_info.value)
+        assert len(str(exc_info.value)) < 700
+        client.close()
+
+    def test_fetch_issue_or_pr_type_non_dict(self, mocker: MockerFixture) -> None:
+        """Test type detection when API returns unexpected data."""
+        client = GitHubClient()
+        mocker.patch.object(client, "get", return_value="not a dict")
+        assert client.fetch_issue_or_pr_type("o", "r", 1) is None
+        client.close()

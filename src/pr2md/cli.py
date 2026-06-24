@@ -40,6 +40,7 @@ def setup_logging(verbose: bool = False) -> None:
         level=level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
     )
 
 
@@ -135,12 +136,18 @@ Examples:
         help="Disable automatic downloading of referenced PRs and issues",
     )
 
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with code 2 if any referenced PR/issue download fails",
+    )
+
     return parser
 
 
 def parse_arguments(
     parser: argparse.ArgumentParser,
-) -> tuple[str, str, str, int, Optional[str], bool, int, bool]:
+) -> tuple[str, str, str, int, Optional[str], bool, int, bool, bool]:
     """
     Parse command-line arguments and extract PR/Issue details.
 
@@ -149,7 +156,7 @@ def parse_arguments(
 
     Returns:
         Tuple of (owner, repo, ref_type, number, output_path, verbose, depth,
-                  no_references)
+                  no_references, strict)
     """
     args = parser.parse_args()
     logger = logging.getLogger(__name__)
@@ -209,6 +216,7 @@ def parse_arguments(
     verbose: bool = bool(args.verbose)
     depth: int = int(args.depth)
     no_references: bool = bool(args.no_references)
+    strict: bool = bool(args.strict)
 
     try:
         validate_depth(depth)
@@ -216,7 +224,7 @@ def parse_arguments(
         logger.error("%s", err)
         sys.exit(1)
 
-    return owner, repo, ref_type, number, output_path, verbose, depth, no_references
+    return owner, repo, ref_type, number, output_path, verbose, depth, no_references, strict
 
 
 def _log_processing_error(logger: logging.Logger, message: str, verbose: bool) -> None:
@@ -357,14 +365,19 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     comments: list[Comment],
     reviews: list[Review],
     review_comments: list[ReviewComment],
-) -> None:
-    """Download referenced PRs and issues when auto-naming is used."""
+) -> bool:
+    """
+    Download referenced PRs and issues when auto-naming is used.
+
+    Returns:
+        True if all reference downloads succeeded (or none were attempted)
+    """
     logger = logging.getLogger(__name__)
     type_str = "PR" if ref_type == "pr" else "Issue"
     using_auto_naming = output_path == f"{type_str}-{number}.md"
 
     if not using_auto_naming or no_references or not (pull_request or issue):
-        return
+        return True
 
     logger.info("Scanning for referenced PRs and issues...")
 
@@ -381,7 +394,7 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
 
         if not references:
             logger.info("No references found in %s", type_str)
-            return
+            return True
 
         logger.info("Found %d references to download", len(references))
         downloaded_files = downloader.download_all_references(references)
@@ -395,15 +408,27 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
         else:
             logger.info("No references were successfully downloaded")
 
+        return not downloader.had_download_failures
+
 
 def main() -> None:
     """Main entry point for the CLI."""
     parser = create_parser()
-    owner, repo, ref_type, number, output_path, verbose, depth, no_references = (
-        parse_arguments(parser)
-    )
+    setup_logging(False)
+    (
+        owner,
+        repo,
+        ref_type,
+        number,
+        output_path,
+        verbose,
+        depth,
+        no_references,
+        strict,
+    ) = parse_arguments(parser)
 
-    setup_logging(verbose)
+    if verbose:
+        setup_logging(True)
     logger = logging.getLogger(__name__)
 
     type_str = "PR" if ref_type == "pr" else "Issue"
@@ -430,7 +455,7 @@ def main() -> None:
 
     logger.info("Extraction completed successfully")
 
-    download_references_if_needed(
+    references_ok = download_references_if_needed(
         owner,
         repo,
         ref_type,
@@ -445,6 +470,9 @@ def main() -> None:
         reviews,
         review_comments,
     )
+
+    if strict and not references_ok:
+        sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -45,9 +45,6 @@ max-module-lines = 1000
 # String used for indentation
 indent-string = '    '
 
-# Expected format of line ending
-expected-line-ending-format = CRLF
-
 [BASIC]
 # Good variable names
 good-names = i,

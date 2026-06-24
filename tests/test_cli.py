@@ -22,6 +22,7 @@ from pr2md.cli import (
     write_output,
 )
 from pr2md.exceptions import GitHubAPIError
+from pr2md.reference_parser import GitHubReference
 
 
 def _mock_extractor_context(mock_extractor: MagicMock) -> MagicMock:
@@ -178,7 +179,7 @@ class TestParseArguments:
             "argv",
             ["pr2md", "https://github.com/owner/repo/pull/123"],
         )
-        owner, repo, ref_type, number, output_path, verbose, depth, no_references = (
+        owner, repo, ref_type, number, output_path, verbose, depth, no_references, strict = (
             parse_arguments(parser)
         )
         assert owner == "owner"
@@ -189,6 +190,7 @@ class TestParseArguments:
         assert verbose is False
         assert depth == 2  # default value
         assert no_references is False
+        assert strict is False
 
     def test_parse_arguments_issue_url_format(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with Issue URL format."""
@@ -198,7 +200,7 @@ class TestParseArguments:
             "argv",
             ["pr2md", "https://github.com/owner/repo/issues/456"],
         )
-        owner, repo, ref_type, number, output_path, verbose, depth, no_references = (
+        owner, repo, ref_type, number, output_path, verbose, depth, no_references, strict = (
             parse_arguments(parser)
         )
         assert owner == "owner"
@@ -214,7 +216,7 @@ class TestParseArguments:
         """Test parsing arguments with owner/repo/pr/number format."""
         parser = create_parser()
         mocker.patch.object(sys, "argv", ["pr2md", "owner", "repo", "pr", "123"])
-        owner, repo, ref_type, number, output_path, verbose, depth, no_references = (
+        owner, repo, ref_type, number, output_path, verbose, depth, no_references, strict = (
             parse_arguments(parser)
         )
         assert owner == "owner"
@@ -232,7 +234,7 @@ class TestParseArguments:
         """Test parsing arguments with owner/repo/issue/number format."""
         parser = create_parser()
         mocker.patch.object(sys, "argv", ["pr2md", "owner", "repo", "issue", "789"])
-        owner, repo, ref_type, number, output_path, verbose, depth, no_references = (
+        owner, repo, ref_type, number, output_path, verbose, depth, no_references, strict = (
             parse_arguments(parser)
         )
         assert owner == "owner"
@@ -261,6 +263,7 @@ class TestParseArguments:
             _verbose,
             _depth,
             _no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert Path(output_path).name == "output.md"
 
@@ -281,6 +284,7 @@ class TestParseArguments:
             verbose,
             _depth,
             _no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert verbose is True
 
@@ -333,6 +337,7 @@ class TestParseArguments:
             _verbose,
             _depth,
             _no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert output_path is None
 
@@ -355,6 +360,7 @@ class TestParseArguments:
             _verbose,
             _depth,
             _no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert output_path == "PR-999.md"
 
@@ -377,6 +383,7 @@ class TestParseArguments:
             _verbose,
             _depth,
             _no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert output_path == "Issue-888.md"
 
@@ -397,6 +404,7 @@ class TestParseArguments:
             _verbose,
             depth,
             _no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert depth == 5
 
@@ -417,8 +425,30 @@ class TestParseArguments:
             _verbose,
             _depth,
             no_references,
+            _strict,
         ) = parse_arguments(parser)
         assert no_references is True
+
+    def test_parse_arguments_with_strict(self, mocker: MockerFixture) -> None:
+        """Test parsing arguments with strict flag."""
+        parser = create_parser()
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123", "--strict"],
+        )
+        (
+            _owner,
+            _repo,
+            _ref_type,
+            _number,
+            _output_path,
+            _verbose,
+            _depth,
+            _no_references,
+            strict,
+        ) = parse_arguments(parser)
+        assert strict is True
 
 
     def test_parse_arguments_invalid_depth(self, mocker: MockerFixture) -> None:
@@ -516,6 +546,35 @@ class TestDownloadReferencesIfNeeded:
         )
 
         mock_downloader.assert_not_called()
+
+    def test_returns_false_when_downloads_fail(self, mocker: MockerFixture) -> None:
+        """Test failure flag propagates from downloader."""
+        mock_downloader = mocker.patch("pr2md.cli.ReferenceDownloader")
+        instance = mock_downloader.return_value.__enter__.return_value
+        instance.extract_references_from_pr.return_value = {
+            GitHubReference(ref_type="pr", owner="owner", repo="repo", number=2)
+        }
+        instance.download_all_references.return_value = []
+        instance.had_download_failures = True
+        mock_pr = MagicMock()
+
+        result = download_references_if_needed(
+            "owner",
+            "repo",
+            "pr",
+            123,
+            "PR-123.md",
+            2,
+            False,
+            False,
+            mock_pr,
+            None,
+            [],
+            [],
+            [],
+        )
+
+        assert result is False
 
 
 class TestExtractPRData:
@@ -841,6 +900,25 @@ class TestMain:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
+
+    def test_main_strict_reference_failure(self, mocker: MockerFixture) -> None:
+        """Test main exits with code 2 when strict and references fail."""
+        mocker.patch.object(
+            sys,
+            "argv",
+            ["pr2md", "https://github.com/owner/repo/pull/123", "--strict"],
+        )
+        mock_pr = MagicMock()
+        mocker.patch(
+            "pr2md.cli.extract_pr_data",
+            return_value=("# Markdown", True, mock_pr, [], [], []),
+        )
+        mocker.patch("pr2md.cli.write_output", return_value=True)
+        mocker.patch("pr2md.cli.download_references_if_needed", return_value=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 2
 
 
 class TestCLIHypothesis:

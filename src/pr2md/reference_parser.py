@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from pr2md.validation import validate_owner, validate_repo
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,6 +18,7 @@ class GitHubReference:
     owner: str
     repo: str
     number: int
+    from_url: bool = False
 
     def __hash__(self) -> int:
         """Make GitHubReference hashable for use in sets."""
@@ -79,6 +82,30 @@ class ReferenceParser:
         logger.debug("Found %d references in text", len(references))
         return references
 
+    def _validated_reference(
+        self,
+        ref_type: Literal["issue", "pr"],
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        from_url: bool = False,
+    ) -> Optional[GitHubReference]:
+        """Return a reference if owner/repo are valid GitHub names."""
+        try:
+            validate_owner(owner)
+            validate_repo(repo)
+        except ValueError as err:
+            logger.debug("Skipping invalid reference %s/%s #%d: %s", owner, repo, number, err)
+            return None
+        return GitHubReference(
+            ref_type=ref_type,
+            owner=owner,
+            repo=repo,
+            number=number,
+            from_url=from_url,
+        )
+
     def _parse_url_references(self, text: str) -> set[GitHubReference]:
         """Parse full GitHub URL references."""
         references: set[GitHubReference] = set()
@@ -90,20 +117,18 @@ class ReferenceParser:
             )
             number = int(number_str)
 
-            reference = GitHubReference(
-                ref_type=ref_type,
-                owner=owner,
-                repo=repo,
-                number=number,
+            reference = self._validated_reference(
+                ref_type, owner, repo, number, from_url=True
             )
-            references.add(reference)
-            logger.debug(
-                "Found URL reference: %s/%s %s #%d",
-                owner,
-                repo,
-                ref_type,
-                number,
-            )
+            if reference is not None:
+                references.add(reference)
+                logger.debug(
+                    "Found URL reference: %s/%s %s #%d",
+                    owner,
+                    repo,
+                    ref_type,
+                    number,
+                )
 
         return references
 
@@ -115,18 +140,12 @@ class ReferenceParser:
             owner, repo, number_str = match.groups()
             number = int(number_str)
 
-            # We need to determine if it's a PR or issue by checking GitHub API
-            # For now, we'll try to fetch as both. The downloader will handle this.
-            # But to be consistent with the API, we'll mark cross-repo references
-            # as 'pr' by default and let the downloader verify.
-            reference = GitHubReference(
-                ref_type="pr",  # Will be verified during download
-                owner=owner,
-                repo=repo,
-                number=number,
+            reference = self._validated_reference(
+                "pr", owner, repo, number, from_url=False
             )
-            references.add(reference)
-            logger.debug("Found cross-repo reference: %s/%s #%d", owner, repo, number)
+            if reference is not None:
+                references.add(reference)
+                logger.debug("Found cross-repo reference: %s/%s #%d", owner, repo, number)
 
         return references
 
@@ -138,14 +157,15 @@ class ReferenceParser:
             number_str = match.group(1)
             number = int(number_str)
 
-            # Same as cross-repo, we'll default to 'pr' and verify during download
-            reference = GitHubReference(
-                ref_type="pr",  # Will be verified during download
-                owner=self.base_owner,
-                repo=self.base_repo,
-                number=number,
+            reference = self._validated_reference(
+                "pr",
+                self.base_owner,
+                self.base_repo,
+                number,
+                from_url=False,
             )
-            references.add(reference)
-            logger.debug("Found same-repo reference: #%d", number)
+            if reference is not None:
+                references.add(reference)
+                logger.debug("Found same-repo reference: #%d", number)
 
         return references

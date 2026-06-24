@@ -14,6 +14,7 @@ from pr2md.issue_extractor import GitHubIssueExtractor
 from pr2md.models import Comment, Issue, PullRequest, Review, ReviewComment
 from pr2md.pr_extractor import GitHubPRExtractor
 from pr2md.reference_parser import GitHubReference, ReferenceParser
+from pr2md.validation import validate_output_path
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class ReferenceDownloader:
         self.verbose = verbose
         self.parser = ReferenceParser(base_owner, base_repo)
         self.downloaded: set[GitHubReference] = set()
+        self.had_download_failures = False
         self._owns_client = client is None
         self._client = client or GitHubClient()
         logger.info(
@@ -326,11 +328,12 @@ class ReferenceDownloader:
             return []
 
         ref_type = reference.ref_type
-        if ref_type == "pr" and not self._is_from_url(reference):
+        if ref_type == "pr" and not reference.from_url:
             actual_type = self.determine_ref_type(
                 reference.owner, reference.repo, reference.number
             )
             if actual_type is None:
+                self.had_download_failures = True
                 return []
             ref_type = actual_type
             reference = GitHubReference(
@@ -338,6 +341,7 @@ class ReferenceDownloader:
                 owner=reference.owner,
                 repo=reference.repo,
                 number=reference.number,
+                from_url=reference.from_url,
             )
 
         self.downloaded.add(reference)
@@ -352,16 +356,19 @@ class ReferenceDownloader:
             )
 
         if not markdown:
+            self.had_download_failures = True
             return []
 
         filename = self.generate_filename(
             ref_type, reference.owner, reference.repo, reference.number
         )
         try:
-            write_text_atomic(filename, markdown)
+            validated_path = validate_output_path(filename)
+            write_text_atomic(validated_path, markdown)
             logger.info("Saved %s", filename)
-        except OSError as err:
+        except (ValueError, OSError) as err:
             logger.error("Failed to save %s: %s", filename, err)
+            self.had_download_failures = True
             return []
 
         downloaded_files = [filename]
@@ -373,18 +380,6 @@ class ReferenceDownloader:
                 )
 
         return downloaded_files
-
-    def _is_from_url(self, _reference: GitHubReference) -> bool:
-        """
-        Check if a reference was parsed from a URL.
-
-        Args:
-            _reference: GitHubReference to check (currently unused)
-
-        Returns:
-            True if from URL (trustworthy type), False otherwise
-        """
-        return False
 
     def download_all_references(self, references: set[GitHubReference]) -> list[str]:
         """

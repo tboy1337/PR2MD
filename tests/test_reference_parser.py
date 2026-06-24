@@ -139,6 +139,27 @@ class TestReferenceParser:
         ref = list(refs)[0]
         assert ref.number == 999
 
+    def test_parse_url_sets_from_url(self, parser: ReferenceParser) -> None:
+        """Test URL references are marked as from_url."""
+        refs = parser.parse_references(
+            "See https://github.com/owner/repo/pull/42"
+        )
+        ref = list(refs)[0]
+        assert ref.from_url is True
+
+    def test_parse_same_repo_from_url_false(self, parser: ReferenceParser) -> None:
+        """Test hash references are not marked as from_url."""
+        refs = parser.parse_references("Fixes #99")
+        ref = list(refs)[0]
+        assert ref.from_url is False
+
+    def test_skips_invalid_owner_in_url(self, parser: ReferenceParser) -> None:
+        """Test invalid owner names in URLs are skipped."""
+        refs = parser.parse_references(
+            "See https://github.com/bad!owner/repo/pull/1"
+        )
+        assert len(refs) == 0
+
     def test_parse_repo_with_dots(self, parser: ReferenceParser) -> None:
         """Test parsing cross-repo references with dots in repo name."""
         text = "See owner/repo.js#123"

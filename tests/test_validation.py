@@ -1,10 +1,14 @@
 """Tests for input validation helpers."""
 
+from pathlib import Path
+
 import pytest
 
 from pr2md.validation import (
     validate_depth,
+    validate_github_name,
     validate_issue_number,
+    validate_output_path,
     validate_owner,
     validate_repo,
 )
@@ -57,3 +61,29 @@ class TestValidation:
             validate_depth(-1)
         with pytest.raises(ValueError, match="exceeds maximum"):
             validate_depth(11)
+
+    def test_validate_github_name_max_length(self) -> None:
+        """Test name length validation."""
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            validate_github_name("a" * 40, "owner", max_length=39)
+
+    def test_validate_github_name_invalid_characters(self) -> None:
+        """Test invalid character rejection."""
+        with pytest.raises(ValueError, match="invalid characters"):
+            validate_github_name("bad/name", "repository", max_length=100)
+
+    def test_validate_output_path_within_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test valid output path inside working directory."""
+        monkeypatch.chdir(tmp_path)
+        resolved = validate_output_path("report.md")
+        assert Path(resolved) == (tmp_path / "report.md").resolve()
+
+    def test_validate_output_path_rejects_traversal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test path traversal outside CWD is rejected."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir(parents=True)
+        monkeypatch.chdir(work_dir)
+        with pytest.raises(ValueError, match="must be within the current working directory"):
+            validate_output_path("../../outside.md")

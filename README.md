@@ -130,6 +130,9 @@ pr2md https://github.com/owner/repo/pull/123 --depth 3
 
 # Disable automatic downloading of referenced PRs and issues
 pr2md https://github.com/owner/repo/pull/123 --no-references
+
+# Exit with code 2 if any referenced download fails (default: partial success is OK)
+pr2md https://github.com/owner/repo/pull/123 --strict
 ```
 
 The `--depth` option controls how many levels deep the tool will follow references. For example, with `--depth 2`, if PR #123 references PR #456, and PR #456 references PR #789, the tool will download all three PRs. With `--depth 1`, it would only download PR #123 and PR #456.
@@ -236,6 +239,7 @@ For typical single PR or issue exports, unauthenticated access is usually suffic
 
 - **Public repositories only** — no GitHub token or private-repo support
 - **Rate limited** — 60 API requests per hour without authentication; use `--no-references` or lower `--depth` to reduce usage
+- **Reference downloads** — partial failures are logged but do not change the exit code unless `--strict` is set
 - Requires an internet connection to fetch data
 - Large PRs with extensive diffs may generate very large Markdown files
 - Custom output paths (`-o path`) must stay within the current working directory

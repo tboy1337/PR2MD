@@ -156,3 +156,9 @@ class TestGitHubIssueExtractor:
         issue = extractor.fetch_issue_details()
         assert issue.state == "closed"
         assert issue.closed_at is not None
+
+    def test_context_manager_closes_client(self, mocker: MockerFixture) -> None:
+        """Test that context manager closes the owned client."""
+        with GitHubIssueExtractor("owner", "repo", 123) as extractor:
+            mock_close = mocker.patch.object(extractor._client, "close")
+        mock_close.assert_called_once()
