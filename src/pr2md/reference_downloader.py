@@ -216,12 +216,10 @@ class ReferenceDownloader:
             if err.status_code is not None:
                 return f"GitHub API error ({err.status_code})"
             return "GitHub API error"
-        reason_by_type = {
-            requests.RequestException: "Network request failed",
-            json.JSONDecodeError: "Invalid JSON response",
-        }
-        if type(err) in reason_by_type:
-            return reason_by_type[type(err)]
+        if isinstance(err, requests.RequestException):
+            return "Network request failed"
+        if isinstance(err, json.JSONDecodeError):
+            return "Invalid JSON response"
         if isinstance(err, OSError):
             return f"File error: {err}"
         if isinstance(err, ValueError):

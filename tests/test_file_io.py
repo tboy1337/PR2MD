@@ -97,6 +97,12 @@ class TestAppendTextAtomic:
         append_text_atomic(target, "new content")
         assert target.read_text(encoding="utf-8") == "new content"
 
+    def test_creates_file_preserving_leading_newlines(self, work_dir: Path) -> None:
+        """Test append preserves leading newlines when creating a new file."""
+        target = work_dir / "output.md"
+        append_text_atomic(target, "\n\nsection")
+        assert target.read_text(encoding="utf-8") == "\n\nsection"
+
     def test_custom_encoding(self, work_dir: Path) -> None:
         """Test append with a custom encoding."""
         target = work_dir / "output.md"

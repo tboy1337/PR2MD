@@ -1,10 +1,12 @@
 """Tests for reference downloader."""
 
+import json
 import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from pytest_mock import MockerFixture
 
 from pr2md.exceptions import GitHubAPIError
@@ -431,6 +433,86 @@ class TestReferenceDownloader:
 
         assert any(
             "Unexpected error downloading PR" in r.message for r in caplog.records
+        )
+
+    def test_log_download_error_without_verbose(
+        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test non-API errors log without traceback when not verbose."""
+        downloader = ReferenceDownloader("owner", "repo", verbose=False)
+        mocker.patch.object(
+            downloader,
+            "_format_pr_reference",
+            side_effect=ValueError("boom"),
+        )
+
+        with caplog.at_level(logging.ERROR):
+            downloader.download_pr("owner", "repo", 1)
+
+        assert any(
+            "Unexpected error downloading PR" in r.message for r in caplog.records
+        )
+        assert not any("Full traceback" in r.message for r in caplog.records)
+
+
+class TestDownloadErrorReason:
+    """Tests for user-facing download failure reasons."""
+
+    @pytest.fixture
+    def downloader(self) -> ReferenceDownloader:
+        """Create a downloader for error-reason tests."""
+        return ReferenceDownloader("owner", "repo")
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (GitHubAPIError("x", status_code=401), "Authentication required (401)"),
+            (GitHubAPIError("x", status_code=403), "Access forbidden (403)"),
+            (GitHubAPIError("x", status_code=404), "Not found (404)"),
+            (GitHubAPIError("x", status_code=418), "GitHub API error (418)"),
+            (GitHubAPIError("x"), "GitHub API error"),
+        ],
+    )
+    def test_download_error_reason_github_api(
+        self, downloader: ReferenceDownloader, error: GitHubAPIError, expected: str
+    ) -> None:
+        """Test GitHub API errors map to short reasons."""
+        assert downloader._download_error_reason(error) == expected
+
+    def test_download_error_reason_request_exception(
+        self, downloader: ReferenceDownloader
+    ) -> None:
+        """Test network failures map to a request error reason."""
+        assert (
+            downloader._download_error_reason(requests.ConnectionError("down"))
+            == "Network request failed"
+        )
+
+    def test_download_error_reason_json_decode_error(
+        self, downloader: ReferenceDownloader
+    ) -> None:
+        """Test JSON decode failures map to invalid JSON reason."""
+        assert (
+            downloader._download_error_reason(json.JSONDecodeError("bad", "doc", 0))
+            == "Invalid JSON response"
+        )
+
+    def test_download_error_reason_value_error(
+        self, downloader: ReferenceDownloader
+    ) -> None:
+        """Test ValueError maps to invalid data reason."""
+        assert (
+            downloader._download_error_reason(ValueError("missing field"))
+            == "Invalid data: missing field"
+        )
+
+    def test_download_error_reason_os_error(
+        self, downloader: ReferenceDownloader
+    ) -> None:
+        """Test OSError maps to file error reason."""
+        assert (
+            downloader._download_error_reason(OSError("permission denied"))
+            == "File error: permission denied"
         )
 
     def test_download_reference_depth_limit(

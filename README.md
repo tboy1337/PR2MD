@@ -254,7 +254,7 @@ PR2MD avoids silent truncation where possible, with explicit bounds:
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Primary extraction, write, or summary append failed |
+| 1 | Primary extraction, write, or summary append failed (including when the PR/issue number does not exist) |
 | 2 | `--strict` was set and one or more reference downloads failed |
 
 ## Development
@@ -296,6 +296,7 @@ pytest -m integration   # live API smoke tests
 - Large PRs with extensive diffs may generate very large Markdown files; responses are streamed (no artificial size cap) with a 5 MB informational warning and a 300 second diff read timeout
 - Custom output paths (`-o path`) must stay within the current working directory; nested subdirectories are created automatically when needed
 - Issues accessed via the `/issues/` URL path are treated as issues; use `/pull/` or explicit `pr` for pull requests
+- **Non-existent resources** — if the repository or PR/issue number does not exist, the run exits immediately with code 1 and no output file is written
 
 ## License
 

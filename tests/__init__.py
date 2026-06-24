@@ -1,1 +1,1 @@
-"""Tests for GitHub PR extractor."""
+"""PR2MD test suite."""

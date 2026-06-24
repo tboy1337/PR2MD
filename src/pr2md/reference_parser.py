@@ -88,7 +88,7 @@ class ReferenceParser:
             existing = by_key.get(key)
             if existing is None:
                 by_key[key] = reference
-            elif reference.from_url and not existing.from_url:
+            elif reference.from_url:
                 by_key[key] = reference
         return set(by_key.values())
 

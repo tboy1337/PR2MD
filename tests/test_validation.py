@@ -177,3 +177,27 @@ class TestValidation:
         monkeypatch.chdir(tmp_path)
         resolved = assert_safe_write_path("report.md")
         assert resolved == (tmp_path / "report.md").resolve()
+
+    def test_assert_safe_write_path_rejects_symlink_escape(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test symlink targets outside CWD are rejected before writing."""
+        pytest.importorskip("os")
+        import os
+
+        if not hasattr(os, "symlink"):
+            pytest.skip("symlinks not supported on this platform")
+
+        work_dir = tmp_path / "work"
+        outside_dir = tmp_path / "outside"
+        work_dir.mkdir()
+        outside_dir.mkdir()
+        link_path = work_dir / "escape_link"
+        try:
+            os.symlink(outside_dir, link_path, target_is_directory=True)
+        except OSError as err:
+            pytest.skip(f"cannot create symlink: {err}")
+
+        monkeypatch.chdir(work_dir)
+        with pytest.raises(ValueError, match="symlink component"):
+            assert_safe_write_path("escape_link/outside.md")

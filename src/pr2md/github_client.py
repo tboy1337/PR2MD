@@ -85,24 +85,11 @@ def _read_response_text(response: requests.Response) -> str:
 
 def _read_bounded_error_snippet(response: requests.Response) -> str:
     """Read up to *_MAX_ERROR_BODY_BYTES* of an error response for diagnostics."""
-    chunks: list[bytes] = []
-    total = 0
-    truncated = False
-    for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
-        if not chunk:
-            continue
-        remaining = _MAX_ERROR_BODY_BYTES - total
-        if remaining <= 0:
-            truncated = True
-            break
-        piece = chunk[:remaining]
-        chunks.append(piece)
-        total += len(piece)
-        if len(chunk) > remaining:
-            truncated = True
-            break
+    full_body = response.content
+    truncated = len(full_body) > _MAX_ERROR_BODY_BYTES
+    raw = full_body[:_MAX_ERROR_BODY_BYTES]
     encoding = response.encoding or "utf-8"
-    text = b"".join(chunks).decode(encoding, errors="replace")
+    text = raw.decode(encoding, errors="replace")
     if truncated:
         if len(text) > _MAX_ERROR_BODY_LENGTH:
             text = f"{text[:_MAX_ERROR_BODY_LENGTH]}... (truncated)"

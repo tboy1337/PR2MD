@@ -41,6 +41,7 @@ def make_http_response(
             yield payload[offset : offset + chunk_size]
             offset += chunk_size
 
+    response.content = payload
     response.iter_content = iter_content
     return response
 

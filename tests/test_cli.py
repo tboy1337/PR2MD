@@ -806,6 +806,10 @@ class TestDownloadReferencesIfNeeded:
             "argv",
             ["pr2md", "https://github.com/owner/repo/pull/123", "--strict"],
         )
+        mocker.patch(
+            "pr2md.cli._resolve_primary_ref_type",
+            return_value=("pr", None),
+        )
         mock_pr = MagicMock()
         mocker.patch(
             "pr2md.cli.extract_pr_data",
@@ -1092,21 +1096,13 @@ class TestResolvePrimaryRefType:
         assert resolved_type == "issue"
         assert payload == issue_payload
 
-    def test_returns_original_type_when_not_found(
-        self, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Test original type is kept when resource is not found."""
+    def test_raises_when_not_found(self, mocker: MockerFixture) -> None:
+        """Test not-found resources raise GitHubAPIError immediately."""
         mock_client = mocker.Mock()
         mock_client.fetch_issue_or_pr_metadata.return_value = (None, None)
 
-        with caplog.at_level(logging.WARNING, logger="pr2md.cli"):
-            resolved_type, payload = _resolve_primary_ref_type(
-                "pr", "owner", "repo", 1, mock_client
-            )
-
-        assert resolved_type == "pr"
-        assert payload is None
-        assert any("not found during type probe" in r.message for r in caplog.records)
+        with pytest.raises(GitHubAPIError, match="Resource not found"):
+            _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client)
 
     def test_run_primary_extraction_uses_resolved_type(
         self, mocker: MockerFixture
@@ -1239,6 +1235,28 @@ class TestMain:
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert exc_info.value.code == 1
+
+    def test_main_not_found_exits_without_writing(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """Test main exits when the primary resource is not found."""
+        mocker.patch.object(
+            sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/999"]
+        )
+        mocker.patch(
+            "pr2md.cli._resolve_primary_ref_type",
+            side_effect=GitHubAPIError(
+                "Resource not found: owner/repo #999",
+                status_code=404,
+            ),
+        )
+        write_mock = mocker.patch("pr2md.cli.write_output")
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+        write_mock.assert_not_called()
+        assert not (tmp_path / "PR-999.md").exists()
 
     def test_main_auto_output_validation_error(self, mocker: MockerFixture) -> None:
         """Test main exits when auto output path validation fails."""

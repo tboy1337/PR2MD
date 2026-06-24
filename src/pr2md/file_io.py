@@ -92,7 +92,7 @@ def append_text_atomic(
                         dest.write(chunk)
                 dest.write(suffix)
             else:
-                dest.write(suffix.lstrip("\n"))
+                dest.write(suffix)
         _fsync_path(temp_path)
         temp_path.replace(target)
     except OSError:

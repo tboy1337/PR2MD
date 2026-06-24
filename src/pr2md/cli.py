@@ -577,13 +577,11 @@ def _resolve_primary_ref_type(
 
     if actual_type is None or actual_type == ref_type:
         if actual_type is None:
-            logger.warning(
-                "Resource #%d in %s/%s was not found during type probe; "
-                "proceeding with user-specified type '%s'",
-                number,
-                owner,
-                repo,
-                ref_type,
+            raise GitHubAPIError(
+                f"Resource not found: {owner}/{repo} #{number}. "
+                "Please check that the repository and resource number are correct.",
+                status_code=404,
+                url=f"/repos/{owner}/{repo}/issues/{number}",
             )
         return ref_type, cached_issue_payload if actual_type == "issue" else None
 

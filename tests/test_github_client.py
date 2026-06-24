@@ -30,6 +30,7 @@ class TestParseNextLink:
         """Test parsing a Link header without next."""
         assert _parse_next_link(None) is None
         assert _parse_next_link('rel="last"') is None
+        assert _parse_next_link('rel="next"') is None
 
 
 class TestGitHubClient:
@@ -89,11 +90,45 @@ class TestGitHubClient:
     def test_get_403_forbidden(self, mocker: MockerFixture) -> None:
         """Test forbidden handling."""
         client = GitHubClient()
-        mock_response = make_http_response(mocker, status_code=403, body="Forbidden")
+        mock_response = make_http_response(
+            mocker,
+            status_code=403,
+            body="Forbidden: private repo",
+            headers={"X-RateLimit-Remaining": "1"},
+        )
         mocker.patch.object(client.session, "get", return_value=mock_response)
 
         with pytest.raises(GitHubAPIError, match="Access forbidden"):
             client.get("/repos/o/r")
+        client.close()
+
+    def test_get_403_not_rate_limited_when_remaining_positive(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test 403 with remaining quota is not treated as a rate limit."""
+        from pr2md.github_client import _is_rate_limited
+
+        response = make_http_response(
+            mocker,
+            status_code=403,
+            body="Forbidden: private repo",
+            headers={"X-RateLimit-Remaining": "1"},
+        )
+        assert _is_rate_limited(response) is False
+
+    def test_get_408_retry_then_success(self, mocker: MockerFixture) -> None:
+        """Test HTTP 408 is retried before succeeding."""
+        client = GitHubClient()
+        timeout_response = make_http_response(mocker, status_code=408, body="Timeout")
+        ok_response = make_http_response(mocker, json_data={"ok": True})
+        mocker.patch.object(
+            client.session,
+            "get",
+            side_effect=[timeout_response, ok_response],
+        )
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        assert client.get("/repos/o/r") == {"ok": True}
         client.close()
 
     def test_get_other_error(self, mocker: MockerFixture) -> None:
@@ -510,6 +545,62 @@ class TestGitHubClient:
         with pytest.raises(GitHubAPIError, match="maximum wait time reached"):
             client.get("/repos/o/r")
         client.close()
+
+    def test_reactive_rate_limit_total_wait_budget_exceeded(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test reactive rate-limit waits stop when total wait budget is exhausted."""
+        client = GitHubClient()
+        client._total_rate_limit_wait_seconds = 3500.0
+        rate_limited = make_http_response(
+            mocker,
+            status_code=429,
+            body="Too Many Requests",
+            headers={"Retry-After": "200"},
+        )
+        mocker.patch.object(client.session, "get", return_value=rate_limited)
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        with pytest.raises(GitHubAPIError, match="maximum wait time reached"):
+            client.get("/repos/o/r")
+        client.close()
+
+    def test_read_bounded_error_snippet_truncates_large_body(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test error snippets are bounded for very large response bodies."""
+        from pr2md.github_client import (
+            _MAX_ERROR_BODY_BYTES,
+            _MAX_ERROR_BODY_LENGTH,
+            _read_bounded_error_snippet,
+        )
+
+        body = ("x" * (_MAX_ERROR_BODY_BYTES + 100)).encode()
+        response = mocker.Mock()
+        response.content = body
+        response.encoding = "utf-8"
+
+        snippet = _read_bounded_error_snippet(response)
+        assert snippet.endswith("... (truncated)")
+        assert len(snippet) <= _MAX_ERROR_BODY_LENGTH + len("... (truncated)") + 5
+
+    def test_read_bounded_error_snippet_truncates_long_text(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test error snippets truncate decoded text longer than the char limit."""
+        from pr2md.github_client import (
+            _MAX_ERROR_BODY_LENGTH,
+            _read_bounded_error_snippet,
+        )
+
+        body = ("é" * (_MAX_ERROR_BODY_LENGTH + 50)).encode("utf-8")
+        response = mocker.Mock()
+        response.content = body
+        response.encoding = "utf-8"
+
+        snippet = _read_bounded_error_snippet(response)
+        assert snippet.endswith("... (truncated)")
+        assert len(snippet) <= _MAX_ERROR_BODY_LENGTH + len("... (truncated)")
 
     def test_fetch_issue_or_pr_metadata_pr(self, mocker: MockerFixture) -> None:
         """Test metadata probe returns PR type without issue payload."""

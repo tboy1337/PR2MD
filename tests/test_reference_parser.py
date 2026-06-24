@@ -227,3 +227,16 @@ class TestReferenceParser:
         refs = parser.parse_references(text)
 
         assert refs == set()
+
+    def test_dedupe_prefers_url_ref_type_over_shorthand(
+        self, parser: ReferenceParser
+    ) -> None:
+        """Test URL-derived issue type wins over same-repo PR shorthand."""
+        text = "See #42 and https://github.com/testowner/testrepo/issues/42"
+        refs = parser.parse_references(text)
+
+        assert len(refs) == 1
+        ref = next(iter(refs))
+        assert ref.ref_type == "issue"
+        assert ref.from_url is True
+        assert ref.number == 42
