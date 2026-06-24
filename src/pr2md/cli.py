@@ -74,7 +74,7 @@ def parse_pr_url(url: str) -> tuple[str, str, str, int]:
     Raises:
         ValueError: If URL is invalid
     """
-    pattern = r"https?://github\.com/([^/]+)/([^/]+)/(pull|issues)/(\d+)"
+    pattern = r"https://github\.com/([^/]+)/([^/]+)/(pull|issues)/(\d+)"
     match = re.match(pattern, url)
     if not match:
         raise ValueError(
@@ -189,7 +189,13 @@ def _output_path_from_args(
     """Resolve the output path from parsed CLI arguments."""
     if args.output is None:
         type_str = "PR" if ref_type == "pr" else "Issue"
-        return f"{type_str}-{number}.md"
+        auto_path = f"{type_str}-{number}.md"
+        try:
+            return validate_output_path(auto_path)
+        except ValueError as err:
+            logger = logging.getLogger(__name__)
+            logger.error("%s", err)
+            sys.exit(1)
     if args.output == _STDOUT_SENTINEL:
         return None
     try:
@@ -277,6 +283,7 @@ def _extract_and_format(
         json.JSONDecodeError,
         KeyError,
         ValueError,
+        TypeError,
     ) as err:
         _log_processing_error(
             logger, f"Unexpected error extracting {resource_label}: {err}", verbose
@@ -294,7 +301,12 @@ def _extract_and_format(
 
 
 def extract_pr_data(
-    owner: str, repo: str, pr_number: int, verbose: bool
+    owner: str,
+    repo: str,
+    pr_number: int,
+    verbose: bool,
+    *,
+    client: Optional[GitHubClient] = None,
 ) -> tuple[
     str, bool, Optional[PullRequest], list[Comment], list[Review], list[ReviewComment]
 ]:
@@ -314,7 +326,7 @@ def extract_pr_data(
     def extract_fn() -> (
         tuple[PullRequest, list[Comment], list[Review], list[ReviewComment], str]
     ):
-        with GitHubPRExtractor(owner, repo, pr_number) as extractor:
+        with GitHubPRExtractor(owner, repo, pr_number, client=client) as extractor:
             return extractor.extract_all()
 
     def format_fn(
@@ -342,7 +354,12 @@ def extract_pr_data(
 
 
 def extract_issue_data(
-    owner: str, repo: str, issue_number: int, verbose: bool
+    owner: str,
+    repo: str,
+    issue_number: int,
+    verbose: bool,
+    *,
+    client: Optional[GitHubClient] = None,
 ) -> tuple[str, bool, Optional[Issue], list[Comment]]:
     """
     Extract Issue data and format as Markdown.
@@ -358,7 +375,9 @@ def extract_issue_data(
     """
 
     def extract_fn() -> tuple[Issue, list[Comment]]:
-        with GitHubIssueExtractor(owner, repo, issue_number) as extractor:
+        with GitHubIssueExtractor(
+            owner, repo, issue_number, client=client
+        ) as extractor:
             return extractor.extract_all()
 
     def format_fn(data: tuple[Issue, list[Comment]]) -> str:
@@ -441,6 +460,8 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     comments: list[Comment],
     reviews: list[Review],
     review_comments: list[ReviewComment],
+    *,
+    client: Optional[GitHubClient] = None,
 ) -> tuple[bool, list[tuple[GitHubReference, str]]]:
     """
     Download referenced PRs and issues when auto-naming is used.
@@ -450,7 +471,9 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     """
     logger = logging.getLogger(__name__)
     type_str = "PR" if ref_type == "pr" else "Issue"
-    using_auto_naming = output_path == f"{type_str}-{number}.md"
+    using_auto_naming = (
+        output_path is not None and Path(output_path).name == f"{type_str}-{number}.md"
+    )
 
     if not using_auto_naming or no_references or not (pull_request or issue):
         return True, []
@@ -458,7 +481,7 @@ def download_references_if_needed(  # pylint: disable=too-many-arguments,too-man
     logger.info("Scanning for referenced PRs and issues...")
 
     with ReferenceDownloader(
-        owner, repo, max_depth=depth, verbose=verbose
+        owner, repo, max_depth=depth, verbose=verbose, client=client
     ) as downloader:
         if pull_request:
             references = downloader.extract_references_from_pr(
@@ -509,11 +532,11 @@ def _resolve_primary_ref_type(
     owner: str,
     repo: str,
     number: int,
+    client: GitHubClient,
 ) -> str:
     """Detect actual resource type and auto-correct mismatched CLI arguments."""
     logger = logging.getLogger(__name__)
-    with GitHubClient() as client:
-        actual_type = client.fetch_issue_or_pr_type(owner, repo, number)
+    actual_type = client.fetch_issue_or_pr_type(owner, repo, number)
 
     if actual_type is None or actual_type == ref_type:
         return ref_type
@@ -537,12 +560,13 @@ def _resolve_primary_ref_type(
     return actual_type
 
 
-def _run_primary_extraction(
+def _run_primary_extraction(  # pylint: disable=too-many-positional-arguments,too-many-locals
     ref_type: str,
     owner: str,
     repo: str,
     number: int,
     verbose: bool,
+    client: GitHubClient,
 ) -> tuple[
     str,
     bool,
@@ -553,15 +577,21 @@ def _run_primary_extraction(
     list[ReviewComment],
 ]:
     """Extract and format the target PR or issue."""
-    resolved_type = _resolve_primary_ref_type(ref_type, owner, repo, number)
+    logger = logging.getLogger(__name__)
+    try:
+        resolved_type = _resolve_primary_ref_type(ref_type, owner, repo, number, client)
+    except GitHubAPIError as err:
+        logger.error("GitHub API error: %s", err)
+        return "", False, None, None, [], [], []
+
     if resolved_type == "pr":
         markdown, success, pull_request, comments, reviews, review_comments = (
-            extract_pr_data(owner, repo, number, verbose)
+            extract_pr_data(owner, repo, number, verbose, client=client)
         )
         return markdown, success, pull_request, None, comments, reviews, review_comments
 
     markdown, success, issue, comments = extract_issue_data(
-        owner, repo, number, verbose
+        owner, repo, number, verbose, client=client
     )
     return markdown, success, None, issue, comments, [], []
 
@@ -585,52 +615,55 @@ def main() -> None:
         cli_args.number,
     )
 
-    (
-        markdown,
-        success,
-        pull_request,
-        issue,
-        comments,
-        reviews,
-        review_comments,
-    ) = _run_primary_extraction(
-        cli_args.ref_type,
-        cli_args.owner,
-        cli_args.repo,
-        cli_args.number,
-        cli_args.verbose,
-    )
+    with GitHubClient() as client:
+        (
+            markdown,
+            success,
+            pull_request,
+            issue,
+            comments,
+            reviews,
+            review_comments,
+        ) = _run_primary_extraction(
+            cli_args.ref_type,
+            cli_args.owner,
+            cli_args.repo,
+            cli_args.number,
+            cli_args.verbose,
+            client,
+        )
 
-    if not success:
-        sys.exit(1)
-
-    if not write_output(markdown, cli_args.output_path, cli_args.verbose):
-        sys.exit(1)
-
-    logger.info("Extraction completed successfully")
-
-    references_ok, skipped_references = download_references_if_needed(
-        cli_args.owner,
-        cli_args.repo,
-        cli_args.ref_type,
-        cli_args.number,
-        cli_args.output_path,
-        cli_args.depth,
-        cli_args.no_references,
-        cli_args.verbose,
-        pull_request,
-        issue,
-        comments,
-        reviews,
-        review_comments,
-    )
-
-    if skipped_references and cli_args.output_path:
-        if not append_reference_summary(cli_args.output_path, skipped_references):
+        if not success:
             sys.exit(1)
 
-    if cli_args.strict and not references_ok:
-        sys.exit(2)
+        if not write_output(markdown, cli_args.output_path, cli_args.verbose):
+            sys.exit(1)
+
+        logger.info("Extraction completed successfully")
+
+        references_ok, skipped_references = download_references_if_needed(
+            cli_args.owner,
+            cli_args.repo,
+            cli_args.ref_type,
+            cli_args.number,
+            cli_args.output_path,
+            cli_args.depth,
+            cli_args.no_references,
+            cli_args.verbose,
+            pull_request,
+            issue,
+            comments,
+            reviews,
+            review_comments,
+            client=client,
+        )
+
+        if skipped_references and cli_args.output_path:
+            if not append_reference_summary(cli_args.output_path, skipped_references):
+                sys.exit(1)
+
+        if cli_args.strict and not references_ok:
+            sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Tests for reference downloader."""
 
+import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -294,13 +295,39 @@ class TestReferenceDownloader:
         files = downloader.download_reference(ref, current_depth=1)
         assert len(files) == 0
 
-    def test_download_reference_depth_limit(self) -> None:
-        """Test that depth limit is respected."""
+    def test_download_reference_depth_limit(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that depth limit is respected and logged at INFO."""
         downloader = ReferenceDownloader("owner", "repo", max_depth=1)
         ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
 
-        files = downloader.download_reference(ref, current_depth=2)
+        with caplog.at_level(logging.INFO):
+            files = downloader.download_reference(ref, current_depth=2)
+
         assert len(files) == 0
+        assert "depth limit" in caplog.text.lower()
+
+    def test_download_reference_url_type_fallback(self, mocker: MockerFixture) -> None:
+        """Test fallback to alternate type when URL path mismatches resource."""
+        downloader = ReferenceDownloader("owner", "repo", max_depth=1)
+        ref = GitHubReference(
+            ref_type="pr",
+            owner="owner",
+            repo="repo",
+            number=1,
+            from_url=True,
+        )
+
+        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(downloader, "download_pr", return_value=("", None))
+        mocker.patch.object(
+            downloader, "download_issue", return_value=("# Issue", set())
+        )
+        mocker.patch("pr2md.reference_downloader.write_text_atomic")
+
+        files = downloader.download_reference(ref, current_depth=1)
+        assert files == ["Issue-1.md"]
 
     def test_download_reference_success(self, mocker: MockerFixture) -> None:
         """Test successful reference download."""
@@ -352,7 +379,11 @@ class TestReferenceDownloader:
         )
         ref = GitHubReference(ref_type="pr", owner="owner", repo="repo", number=1)
 
-        mocker.patch.object(downloader, "determine_ref_type", return_value="pr")
+        mocker.patch.object(
+            downloader,
+            "determine_ref_type",
+            side_effect=lambda _o, _r, number: "pr" if number == 1 else "issue",
+        )
         mocker.patch.object(
             downloader,
             "download_pr",

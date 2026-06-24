@@ -172,7 +172,7 @@ class Review:
     state: str
     html_url: str
     submitted_at: Optional[datetime]
-    commit_id: str
+    commit_id: Optional[str]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Review":
@@ -192,7 +192,9 @@ class Review:
             state=str(data["state"]),
             html_url=str(data["html_url"]),
             submitted_at=submitted_at,
-            commit_id=str(data["commit_id"]),
+            commit_id=(
+                str(data["commit_id"]) if data.get("commit_id") is not None else None
+            ),
         )
 
 

@@ -1,5 +1,7 @@
 """Atomic file write utilities."""
 
+import os
+import uuid
 from pathlib import Path
 
 
@@ -18,7 +20,8 @@ def write_text_atomic(
         OSError: If the write or rename fails
     """
     target = Path(path)
-    temp_path = target.with_suffix(target.suffix + ".tmp")
+    unique = f"{os.getpid()}.{uuid.uuid4().hex}"
+    temp_path = target.with_name(f"{target.stem}.{unique}{target.suffix}.tmp")
     try:
         temp_path.write_text(content, encoding=encoding)
         temp_path.replace(target)

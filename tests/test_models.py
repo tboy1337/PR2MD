@@ -372,6 +372,24 @@ class TestReview:
         review = Review.from_dict(data)
         assert review.body is None
 
+    def test_from_dict_without_commit_id(self) -> None:
+        """Test Review creation when commit_id is omitted (pending review)."""
+        data = {
+            "id": 1001,
+            "user": {
+                "login": "reviewer",
+                "id": 333,
+                "avatar_url": "https://example.com/avatar.jpg",
+                "html_url": "https://github.com/reviewer",
+            },
+            "body": "Pending",
+            "state": "PENDING",
+            "html_url": "https://github.com/owner/repo/pull/1#pullrequestreview-1001",
+            "submitted_at": None,
+        }
+        review = Review.from_dict(data)
+        assert review.commit_id is None
+
 
 class TestPullRequest:
     """Tests for PullRequest model."""

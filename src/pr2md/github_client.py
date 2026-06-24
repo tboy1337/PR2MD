@@ -24,13 +24,16 @@ logger = logging.getLogger(__name__)
 # Transient server errors: bounded retries with exponential backoff.
 _RETRYABLE_STATUS_CODES = {502, 503, 504}
 _MAX_RETRIES = 3
-# Per-request socket read timeout in seconds.
-_REQUEST_TIMEOUT = 30
+# Connect and read timeouts in seconds (connect, read).
+_REQUEST_TIMEOUT = (10, 30)
 # Items per page when paginating list endpoints.
 _PER_PAGE = 100
+_MAX_PAGINATED_PAGES = 100
 _MAX_ERROR_BODY_LENGTH = 500
 _ALLOWED_API_HOST = "api.github.com"
 _RATE_LIMIT_REMAINING_WARN_THRESHOLD = 10
+_MAX_RATE_LIMIT_WAITS = 5
+_MAX_RATE_LIMIT_WAIT_SECONDS = 3600.0
 
 
 def _parse_next_link(link_header: Optional[str]) -> Optional[str]:
@@ -175,8 +178,16 @@ class GitHubClient:
         separator = "&" if "?" in endpoint else "?"
         url: Optional[str] = f"{self.base_url}{endpoint}{separator}per_page={_PER_PAGE}"
         items: list[Any] = []
+        page_count = 0
 
         while url:
+            page_count += 1
+            if page_count > _MAX_PAGINATED_PAGES:
+                raise GitHubAPIError(
+                    f"Pagination limit exceeded ({_MAX_PAGINATED_PAGES} pages) "
+                    f"for {endpoint}",
+                    url=url,
+                )
             if not _is_allowed_github_api_url(url):
                 raise GitHubAPIError(
                     f"Pagination URL rejected (not GitHub API): {url}",
@@ -214,8 +225,10 @@ class GitHubClient:
         endpoint = f"/repos/{owner}/{repo}/issues/{number}"
         try:
             data = self.get(endpoint)
-        except GitHubAPIError:
-            return None
+        except GitHubAPIError as err:
+            if err.status_code == 404:
+                return None
+            raise
 
         if not isinstance(data, dict):
             return None
@@ -251,6 +264,8 @@ class GitHubClient:
             merged_headers.update(headers)
 
         transient_attempt = 0
+        rate_limit_waits = 0
+        total_rate_limit_wait_seconds = 0.0
 
         while True:
             try:
@@ -279,6 +294,18 @@ class GitHubClient:
 
             if _is_rate_limited(response):
                 wait_seconds = _rate_limit_wait_seconds(response)
+                rate_limit_waits += 1
+                total_rate_limit_wait_seconds += wait_seconds
+                if (
+                    rate_limit_waits > _MAX_RATE_LIMIT_WAITS
+                    or total_rate_limit_wait_seconds > _MAX_RATE_LIMIT_WAIT_SECONDS
+                ):
+                    raise GitHubAPIError(
+                        "GitHub API rate limit exceeded; maximum wait time reached. "
+                        "Try again later or reduce the number of requests.",
+                        status_code=response.status_code,
+                        url=url,
+                    )
                 resume_at = datetime.now(timezone.utc).timestamp() + wait_seconds
                 resume_str = datetime.fromtimestamp(
                     resume_at, tz=timezone.utc

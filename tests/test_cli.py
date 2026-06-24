@@ -27,8 +27,14 @@ from pr2md.cli import (
 )
 from pr2md.exceptions import GitHubAPIError
 from pr2md.reference_parser import GitHubReference
+from pr2md.validation import validate_output_path
 
 # pylint: disable=too-many-lines
+
+
+def _resolved_output_path(name: str) -> str:
+    """Return validated absolute output path for auto-generated filenames."""
+    return validate_output_path(name)
 
 
 def _mock_extractor_context(mock_extractor: MagicMock) -> MagicMock:
@@ -51,15 +57,10 @@ class TestCLI:
         assert ref_type == "pr"
         assert number == 123
 
-    def test_parse_pr_url_valid_http(self) -> None:
-        """Test parsing valid HTTP PR URL."""
-        owner, repo, ref_type, number = parse_pr_url(
-            "http://github.com/owner/repo/pull/456"
-        )
-        assert owner == "owner"
-        assert repo == "repo"
-        assert ref_type == "pr"
-        assert number == 456
+    def test_parse_pr_url_rejects_http(self) -> None:
+        """Test parsing rejects non-HTTPS PR URL."""
+        with pytest.raises(ValueError, match="Invalid GitHub URL"):
+            parse_pr_url("http://github.com/owner/repo/pull/456")
 
     def test_parse_pr_url_with_trailing_slash(self) -> None:
         """Test parsing PR URL with trailing content."""
@@ -81,15 +82,10 @@ class TestCLI:
         assert ref_type == "issue"
         assert number == 123
 
-    def test_parse_issue_url_valid_http(self) -> None:
-        """Test parsing valid HTTP Issue URL."""
-        owner, repo, ref_type, number = parse_pr_url(
-            "http://github.com/owner/repo/issues/456"
-        )
-        assert owner == "owner"
-        assert repo == "repo"
-        assert ref_type == "issue"
-        assert number == 456
+    def test_parse_issue_url_rejects_http(self) -> None:
+        """Test parsing rejects non-HTTPS Issue URL."""
+        with pytest.raises(ValueError, match="Invalid GitHub URL"):
+            parse_pr_url("http://github.com/owner/repo/issues/456")
 
     def test_parse_pr_url_invalid_format(self) -> None:
         """Test parsing invalid URL format."""
@@ -200,7 +196,7 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "pr"
         assert number == 123
-        assert output_path == "PR-123.md"
+        assert output_path == _resolved_output_path("PR-123.md")
         assert verbose is False
         assert depth == 2  # default value
         assert no_references is False
@@ -229,7 +225,7 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "issue"
         assert number == 456
-        assert output_path == "Issue-456.md"
+        assert output_path == _resolved_output_path("Issue-456.md")
         assert verbose is False
         assert depth == 2
         assert no_references is False
@@ -254,7 +250,7 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "pr"
         assert number == 123
-        assert output_path == "PR-123.md"
+        assert output_path == _resolved_output_path("PR-123.md")
         assert verbose is False
         assert depth == 2
         assert no_references is False
@@ -281,7 +277,7 @@ class TestParseArguments:
         assert repo == "repo"
         assert ref_type == "issue"
         assert number == 789
-        assert output_path == "Issue-789.md"
+        assert output_path == _resolved_output_path("Issue-789.md")
         assert verbose is False
         assert depth == 2
         assert no_references is False
@@ -403,7 +399,7 @@ class TestParseArguments:
             _no_references,
             _strict,
         ) = parse_arguments(parser)
-        assert output_path == "PR-999.md"
+        assert output_path == _resolved_output_path("PR-999.md")
 
     def test_parse_arguments_auto_generated_issue_filename(
         self, mocker: MockerFixture
@@ -426,7 +422,7 @@ class TestParseArguments:
             _no_references,
             _strict,
         ) = parse_arguments(parser)
-        assert output_path == "Issue-888.md"
+        assert output_path == _resolved_output_path("Issue-888.md")
 
     def test_parse_arguments_with_depth(self, mocker: MockerFixture) -> None:
         """Test parsing arguments with depth flag."""
@@ -946,21 +942,19 @@ class TestResolvePrimaryRefType:
 
     def test_returns_same_type_when_matching(self, mocker: MockerFixture) -> None:
         """Test no change when CLI type matches API type."""
-        mock_client = mocker.patch("pr2md.cli.GitHubClient")
-        mock_client.return_value.__enter__.return_value.fetch_issue_or_pr_type.return_value = (
-            "pr"
-        )
+        mock_client = mocker.Mock()
+        mock_client.fetch_issue_or_pr_type.return_value = "pr"
 
-        assert _resolve_primary_ref_type("pr", "owner", "repo", 1) == "pr"
+        assert _resolve_primary_ref_type("pr", "owner", "repo", 1, mock_client) == "pr"
 
     def test_auto_corrects_issue_to_pr(self, mocker: MockerFixture) -> None:
         """Test auto-correction when issue arg targets a PR."""
-        mock_client = mocker.patch("pr2md.cli.GitHubClient")
-        mock_client.return_value.__enter__.return_value.fetch_issue_or_pr_type.return_value = (
-            "pr"
-        )
+        mock_client = mocker.Mock()
+        mock_client.fetch_issue_or_pr_type.return_value = "pr"
 
-        assert _resolve_primary_ref_type("issue", "owner", "repo", 1) == "pr"
+        assert (
+            _resolve_primary_ref_type("issue", "owner", "repo", 1, mock_client) == "pr"
+        )
 
     def test_run_primary_extraction_uses_resolved_type(
         self, mocker: MockerFixture
@@ -976,7 +970,7 @@ class TestResolvePrimaryRefType:
         )
         mock_issue_extract = mocker.patch("pr2md.cli.extract_issue_data")
 
-        _run_primary_extraction("issue", "owner", "repo", 1, False)
+        _run_primary_extraction("issue", "owner", "repo", 1, False, mocker.Mock())
 
         mock_issue_extract.assert_not_called()
 
@@ -1045,6 +1039,47 @@ class TestMain:
 
         # Should not raise SystemExit
         main()
+
+    def test_main_uses_single_github_client(self, mocker: MockerFixture) -> None:
+        """Test main creates one shared GitHubClient for the full run."""
+        mocker.patch.object(
+            sys, "argv", ["pr2md", "https://github.com/owner/repo/pull/123"]
+        )
+        mock_client = mocker.Mock()
+        mock_client_cm = mocker.patch("pr2md.cli.GitHubClient")
+        mock_client_cm.return_value.__enter__.return_value = mock_client
+        mocker.patch(
+            "pr2md.cli._run_primary_extraction",
+            return_value=("# Markdown", True, MagicMock(), None, [], [], []),
+        )
+        mocker.patch("pr2md.cli.write_output", return_value=True)
+        mocker.patch(
+            "pr2md.cli.download_references_if_needed",
+            return_value=(True, []),
+        )
+
+        main()
+
+        mock_client_cm.assert_called_once()
+        mock_client_cm.return_value.__enter__.assert_called_once()
+        mock_client_cm.return_value.__exit__.assert_called_once()
+
+    def test_run_primary_extraction_type_probe_api_error(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test extraction fails when type probe hits a non-404 API error."""
+        mock_client = mocker.Mock()
+        mock_client.fetch_issue_or_pr_type.side_effect = GitHubAPIError(
+            "Rate limit exceeded",
+            status_code=403,
+        )
+
+        markdown, success, *_rest = _run_primary_extraction(
+            "pr", "owner", "repo", 1, False, mock_client
+        )
+
+        assert success is False
+        assert markdown == ""
 
     def test_main_issue_success(self, mocker: MockerFixture) -> None:
         """Test successful main execution for Issue."""
@@ -1181,7 +1216,7 @@ class TestCLIHypothesis:
         owner=st.from_regex(r"[\w-]{1,39}", fullmatch=True),
         repo=st.from_regex(r"[\w.-]{1,100}", fullmatch=True),
         pr_number=st.integers(min_value=1, max_value=100000),
-        protocol=st.sampled_from(["http", "https"]),
+        protocol=st.sampled_from(["https"]),
     )
     @settings(max_examples=100, deadline=2000)
     def test_parse_pr_url_valid_pr_urls(
@@ -1199,7 +1234,7 @@ class TestCLIHypothesis:
         owner=st.from_regex(r"[\w-]{1,39}", fullmatch=True),
         repo=st.from_regex(r"[\w.-]{1,100}", fullmatch=True),
         issue_number=st.integers(min_value=1, max_value=100000),
-        protocol=st.sampled_from(["http", "https"]),
+        protocol=st.sampled_from(["https"]),
     )
     @settings(max_examples=100, deadline=2000)
     def test_parse_pr_url_valid_issue_urls(

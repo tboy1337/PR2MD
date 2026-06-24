@@ -27,7 +27,7 @@ class ReferenceParser:
     # Regex patterns for different reference formats
     # Pattern 1: Full URLs - https://github.com/owner/repo/pull/123 or /issues/123
     URL_PATTERN = re.compile(
-        r"https?://github\.com/([^/\s]+)/([^/\s]+)/(pull|issues)/(\d+)",
+        r"https://github\.com/([^/\s]+)/([^/\s]+)/(pull|issues)/(\d+)",
         re.IGNORECASE,
     )
 

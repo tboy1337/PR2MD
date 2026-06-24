@@ -196,7 +196,7 @@ class TestGitHubClient:
         mocker.patch.object(
             client,
             "get",
-            side_effect=GitHubAPIError("Resource not found"),
+            side_effect=GitHubAPIError("Resource not found", status_code=404),
         )
         assert client.fetch_issue_or_pr_type("o", "r", 1) is None
         client.close()
@@ -401,3 +401,71 @@ class TestGitHubClient:
         response = mocker.Mock()
         response.headers = {}
         assert _rate_limit_wait_seconds(response) == 60.0
+
+    def test_fetch_issue_or_pr_type_propagates_non_404(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Test type detection re-raises non-404 API errors."""
+        client = GitHubClient()
+        mocker.patch.object(
+            client,
+            "get",
+            side_effect=GitHubAPIError("Rate limit", status_code=403),
+        )
+
+        with pytest.raises(GitHubAPIError, match="Rate limit"):
+            client.fetch_issue_or_pr_type("o", "r", 1)
+        client.close()
+
+    def test_rate_limit_wait_cap_exceeded(self, mocker: MockerFixture) -> None:
+        """Test rate limit retries stop after maximum waits."""
+        client = GitHubClient()
+        rate_limited = mocker.Mock()
+        rate_limited.status_code = 429
+        rate_limited.text = "Too Many Requests"
+        rate_limited.headers = {"Retry-After": "1"}
+        mocker.patch.object(client.session, "get", return_value=rate_limited)
+        mocker.patch("pr2md.github_client.time.sleep")
+
+        with pytest.raises(GitHubAPIError, match="maximum wait time reached"):
+            client.get("/repos/o/r")
+        client.close()
+
+    def test_get_paginated_page_cap_exceeded(self, mocker: MockerFixture) -> None:
+        """Test pagination stops when page limit is exceeded."""
+        from pr2md.github_client import _MAX_PAGINATED_PAGES
+
+        client = GitHubClient()
+
+        def make_page() -> object:
+            page = mocker.Mock()
+            page.status_code = 200
+            page.json.return_value = [{"id": 1}]
+            page.headers = {"Link": '<https://api.github.com/next>; rel="next"'}
+            return page
+
+        mocker.patch.object(
+            client.session,
+            "get",
+            side_effect=[make_page() for _ in range(_MAX_PAGINATED_PAGES + 1)],
+        )
+
+        with pytest.raises(GitHubAPIError, match="Pagination limit exceeded"):
+            client.get_paginated("/repos/o/r/issues/1/comments")
+        client.close()
+
+
+class TestGitHubAPIError:
+    """Tests for GitHubAPIError formatting."""
+
+    def test_str_includes_status_and_url(self) -> None:
+        """Test string representation includes metadata."""
+        err = GitHubAPIError(
+            "failed",
+            status_code=404,
+            url="https://api.github.com/missing",
+        )
+        text = str(err)
+        assert "failed" in text
+        assert "status_code=404" in text
+        assert "url=https://api.github.com/missing" in text

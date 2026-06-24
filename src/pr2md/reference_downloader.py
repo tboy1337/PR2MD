@@ -79,7 +79,7 @@ class ReferenceDownloader:
         self.had_download_failures = True
 
     def log_skipped_summary(self) -> None:
-        """Log a summary of skipped references to stderr."""
+        """Log a summary of skipped references."""
         if not self.skipped_references:
             return
         logger.error(
@@ -333,6 +333,43 @@ class ReferenceDownloader:
             )
         return ref_type
 
+    def _reference_with_type(
+        self, reference: GitHubReference, ref_type: Literal["issue", "pr"]
+    ) -> GitHubReference:
+        """Return a copy of reference with an updated type."""
+        return GitHubReference(
+            ref_type=ref_type,
+            owner=reference.owner,
+            repo=reference.repo,
+            number=reference.number,
+            from_url=reference.from_url,
+        )
+
+    def _fetch_reference_markdown(
+        self,
+        ref_type: Literal["issue", "pr"],
+        owner: str,
+        repo: str,
+        number: int,
+    ) -> tuple[str, Optional[set[GitHubReference]], Literal["issue", "pr"]]:
+        """Download markdown, falling back to the alternate resource type."""
+        if ref_type == "pr":
+            markdown, found_refs = self.download_pr(owner, repo, number)
+        else:
+            markdown, found_refs = self.download_issue(owner, repo, number)
+
+        if markdown:
+            return markdown, found_refs, ref_type
+
+        alternate: Literal["issue", "pr"] = "issue" if ref_type == "pr" else "pr"
+        if alternate == "pr":
+            markdown, found_refs = self.download_pr(owner, repo, number)
+        else:
+            markdown, found_refs = self.download_issue(owner, repo, number)
+        if markdown:
+            return markdown, found_refs, alternate
+        return "", found_refs, ref_type
+
     def download_reference(
         self, reference: GitHubReference, current_depth: int
     ) -> list[str]:
@@ -357,8 +394,9 @@ class ReferenceDownloader:
             return []
 
         if current_depth > self.max_depth:
-            logger.debug(
-                "Skipping reference due to depth limit: %s/%s %s #%d",
+            logger.info(
+                "Skipping reference due to depth limit (%d): %s/%s %s #%d",
+                self.max_depth,
                 reference.owner,
                 reference.repo,
                 reference.ref_type,
@@ -366,33 +404,25 @@ class ReferenceDownloader:
             )
             return []
 
-        ref_type = reference.ref_type
-        if ref_type == "pr" and not reference.from_url:
-            actual_type = self.determine_ref_type(
-                reference.owner, reference.repo, reference.number
+        actual_type = self.determine_ref_type(
+            reference.owner, reference.repo, reference.number
+        )
+        if actual_type is None:
+            self.record_skipped_reference(
+                reference, "Could not determine issue or PR type (not found)"
             )
-            if actual_type is None:
-                self.record_skipped_reference(
-                    reference, "Could not determine issue or PR type (not found)"
-                )
-                return []
-            ref_type = actual_type
-            reference = GitHubReference(
-                ref_type=ref_type,
-                owner=reference.owner,
-                repo=reference.repo,
-                number=reference.number,
-                from_url=reference.from_url,
-            )
+            return []
 
-        if ref_type == "pr":
-            markdown, found_refs = self.download_pr(
-                reference.owner, reference.repo, reference.number
-            )
-        else:
-            markdown, found_refs = self.download_issue(
-                reference.owner, reference.repo, reference.number
-            )
+        ref_type = actual_type
+        reference = self._reference_with_type(reference, ref_type)
+
+        markdown, found_refs, ref_type = self._fetch_reference_markdown(
+            ref_type,
+            reference.owner,
+            reference.repo,
+            reference.number,
+        )
+        reference = self._reference_with_type(reference, ref_type)
 
         if not markdown:
             self.record_skipped_reference(

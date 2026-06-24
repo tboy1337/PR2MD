@@ -178,17 +178,16 @@ class TestReferenceParser:
         assert ref.repo == "my-repo"
         assert ref.number == 456
 
-    def test_parse_http_and_https(self, parser: ReferenceParser) -> None:
-        """Test that both http and https URLs are parsed."""
+    def test_parse_https_urls_only(self, parser: ReferenceParser) -> None:
+        """Test that only https URLs are parsed."""
         text = """
         http://github.com/owner/repo/pull/100
         https://github.com/owner/repo/pull/200
         """
         refs = parser.parse_references(text)
 
-        assert len(refs) == 2
-        numbers = {ref.number for ref in refs}
-        assert numbers == {100, 200}
+        assert len(refs) == 1
+        assert list(refs)[0].number == 200
 
     def test_parse_multiline_text(self, parser: ReferenceParser) -> None:
         """Test parsing references in multiline text."""
