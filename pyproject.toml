@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "PR2MD"
-version = "1.0.23"
+version = "1.0.24"
 description = "Pull Request Markdown Generator"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -46,7 +46,7 @@ dev = [
     "isort",
     "types-requests",
     "bandit",
-    "safety",
+    "pip-audit",
 ]
 
 [project.urls]
