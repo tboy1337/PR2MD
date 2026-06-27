@@ -2,6 +2,9 @@
 """
 PyInstaller specification file for PR2MD.
 
+Generate ``file_version_info.txt`` before building:
+  python scripts/generate_file_version_info.py
+
 This spec file includes optimizations to reduce antivirus false positives:
 - Version information resource for legitimacy
 - Disabled UPX compression (--noupx) which triggers heuristic detection
