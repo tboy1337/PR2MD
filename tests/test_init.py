@@ -19,7 +19,7 @@ class TestPackageInit:
     """Tests for pr2md.__init__ exports and version."""
 
     def test_version_from_metadata(self) -> None:
-        """Test __version__ is resolved from installed package metadata."""
+        """Test __version__ is resolved from pyproject.toml or package metadata."""
         import pr2md
 
         assert pr2md.__version__

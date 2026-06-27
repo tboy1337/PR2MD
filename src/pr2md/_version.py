@@ -1,5 +1,6 @@
 """Package version resolution."""
 
+import sys
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -8,7 +9,11 @@ _PACKAGE_NAME = "PR2MD"
 
 
 def _pyproject_path() -> Path:
-    """Return the repository pyproject.toml path."""
+    """Return pyproject.toml for source trees or PyInstaller bundles."""
+    if getattr(sys, "frozen", False):
+        bundled = Path(getattr(sys, "_MEIPASS", "")) / "pyproject.toml"
+        if bundled.is_file():
+            return bundled
     return Path(__file__).resolve().parent.parent.parent / "pyproject.toml"
 
 
@@ -26,7 +31,11 @@ def _fallback_version() -> str:
 
 
 def get_version() -> str:
-    """Return the installed package version, falling back to pyproject.toml."""
+    """Return the package version, preferring pyproject.toml when available."""
+    if _pyproject_path().is_file():
+        pyproject_version = _fallback_version()
+        if pyproject_version != "unknown":
+            return pyproject_version
     try:
         return version(_PACKAGE_NAME)
     except PackageNotFoundError:
